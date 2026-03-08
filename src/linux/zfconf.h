@@ -8,6 +8,7 @@
  * variable to 1 */
 
 #define ZF_ENABLE_TRACE 1
+#define ZF_ENABLE_DYNAMIC_DICT 1
 
 
 /* Set to 1 to add boundary checks to stack operations. Increases .text size

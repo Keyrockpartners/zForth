@@ -13,6 +13,10 @@ extern "C"
 
 #include "zfconf.h"
 
+#ifndef ZF_ENABLE_DYNAMIC_DICT
+#define ZF_ENABLE_DYNAMIC_DICT 0
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -61,7 +65,12 @@ typedef struct {
 	/* Stacks and dictionary memory */
 	zf_cell rstack[ZF_RSTACK_SIZE];
 	zf_cell dstack[ZF_DSTACK_SIZE];
+	#if ZF_ENABLE_DYNAMIC_DICT
+	uint8_t *dict;
+	size_t dict_cap;
+	#else
 	uint8_t dict[ZF_DICT_SIZE];
+	#endif
 
 	/* State and stack and interpreter pointers */
 	zf_input_state input_state;
@@ -77,7 +86,6 @@ typedef struct {
 	/* Name buffer */
 	char name_buf[32];
 
-	zf_addr *uservar;
 } zf_ctx;
 
 
@@ -89,8 +97,12 @@ typedef struct {
 /* ZForth API functions */
 
 void zf_init(zf_ctx *ctx, int trace);
+void zf_free(zf_ctx *ctx);
 void zf_bootstrap(zf_ctx *ctx);
 void *zf_dump(zf_ctx *ctx, size_t *len);
+size_t zf_dict_size(zf_ctx *ctx);
+size_t zf_dict_capacity(zf_ctx *ctx);
+zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len);
 zf_result zf_eval(zf_ctx *ctx, const char *buf);
 void zf_abort(zf_ctx *ctx, zf_result reason);
 

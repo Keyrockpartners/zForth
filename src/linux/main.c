@@ -79,8 +79,8 @@ void include(zf_ctx *ctx, const char *fname)
 
 static void save(zf_ctx *ctx, const char *fname)
 {
-	size_t len;
-	void *p = zf_dump(ctx, &len);
+	size_t len = zf_dict_size(ctx);
+	void *p = zf_dump(ctx, NULL);
 	FILE *f = fopen(fname, "wb");
 	if(f) {
 		fwrite(p, 1, len, f);
@@ -95,12 +95,52 @@ static void save(zf_ctx *ctx, const char *fname)
 
 static void load(zf_ctx *ctx, const char *fname)
 {
-	size_t len;
-	void *p = zf_dump(ctx, &len);
 	FILE *f = fopen(fname, "rb");
 	if(f) {
-		fread(p, 1, len, f);
+		long file_size;
+		void *buf;
+		zf_result rv;
+
+		if(fseek(f, 0, SEEK_END) != 0) {
+			perror("read");
+			fclose(f);
+			return;
+		}
+
+		file_size = ftell(f);
+		if(file_size < 0) {
+			perror("read");
+			fclose(f);
+			return;
+		}
+
+		if(fseek(f, 0, SEEK_SET) != 0) {
+			perror("read");
+			fclose(f);
+			return;
+		}
+
+		buf = malloc((size_t)file_size);
+		if(buf == NULL) {
+			fprintf(stderr, "out of memory while loading '%s'\n", fname);
+			fclose(f);
+			return;
+		}
+
+		if(fread(buf, 1, (size_t)file_size, f) != (size_t)file_size) {
+			perror("read");
+			free(buf);
+			fclose(f);
+			return;
+		}
+
+		rv = zf_dict_import(ctx, buf, (size_t)file_size);
+		free(buf);
 		fclose(f);
+
+		if(rv != ZF_OK) {
+			fprintf(stderr, "error loading dictionary '%s'\n", fname);
+		}
 	} else {
 		perror("read");
 	}
@@ -130,7 +170,8 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 		case ZF_SYSCALL_TELL: {
 			zf_cell len = zf_pop(ctx);
 			zf_cell addr = zf_pop(ctx);
-			if(addr >= ZF_DICT_SIZE - len) {
+			size_t cap = zf_dict_capacity(ctx);
+			if(addr < 0 || len < 0 || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
 				zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 			}
 			void *buf = (uint8_t *)zf_dump(ctx, NULL) + (int)addr;
@@ -248,7 +289,6 @@ int main(int argc, char **argv)
 	argv += optind;
 
 	zf_ctx *ctx = malloc(sizeof(zf_ctx));
-	printf("%p\n", (void *)ctx);
 
 	/* Initialize zforth */
 
@@ -313,6 +353,8 @@ int main(int argc, char **argv)
 	}
 #endif
 
+	zf_free(ctx);
+	free(ctx);
 	return 0;
 }
 
@@ -320,4 +362,3 @@ int main(int argc, char **argv)
 /*
  * End
  */
-

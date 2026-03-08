@@ -1,5 +1,6 @@
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
 
@@ -68,13 +69,14 @@ static const char prim_names[] =
  * C they are stored in an array of zf_addr with friendly reference names
  * through some macros */
 
-#define HERE(ctx)      ctx->uservar[ZF_USERVAR_HERE]      /* compilation pointer in dictionary */
-#define LATEST(ctx)    ctx->uservar[ZF_USERVAR_LATEST]    /* pointer to last compiled word */
-#define TRACE(ctx)     ctx->uservar[ZF_USERVAR_TRACE]     /* trace enable flag */
-#define COMPILING(ctx) ctx->uservar[ZF_USERVAR_COMPILING] /* compiling flag */
-#define POSTPONE(ctx)  ctx->uservar[ZF_USERVAR_POSTPONE]  /* flag to indicate next imm word should be compiled */
-#define DSP(ctx)       ctx->uservar[ZF_USERVAR_DSP]       /* data stack pointer */
-#define RSP(ctx)       ctx->uservar[ZF_USERVAR_RSP]       /* return stack pointer */
+#define USERVAR(ctx)   ((zf_addr *)(ctx)->dict)
+#define HERE(ctx)      USERVAR(ctx)[ZF_USERVAR_HERE]      /* compilation pointer in dictionary */
+#define LATEST(ctx)    USERVAR(ctx)[ZF_USERVAR_LATEST]    /* pointer to last compiled word */
+#define TRACE(ctx)     USERVAR(ctx)[ZF_USERVAR_TRACE]     /* trace enable flag */
+#define COMPILING(ctx) USERVAR(ctx)[ZF_USERVAR_COMPILING] /* compiling flag */
+#define POSTPONE(ctx)  USERVAR(ctx)[ZF_USERVAR_POSTPONE]  /* flag to indicate next imm word should be compiled */
+#define DSP(ctx)       USERVAR(ctx)[ZF_USERVAR_DSP]       /* data stack pointer */
+#define RSP(ctx)       USERVAR(ctx)[ZF_USERVAR_RSP]       /* return stack pointer */
 
 static const char uservar_names[] =
 	_("h")   _("latest") _("trace")  _("compiling")  _("_postpone")  _("dsp")
@@ -85,8 +87,68 @@ static const char uservar_names[] =
 /* Prototypes */
 
 static void do_prim(zf_ctx *ctx, zf_prim prim, const char *input);
+static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len);
 static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
+static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len);
+
+static size_t dict_capacity(const zf_ctx *ctx)
+{
+	#if ZF_ENABLE_DYNAMIC_DICT
+	return ctx->dict_cap;
+	#else
+	(void)ctx;
+	return ZF_DICT_SIZE;
+	#endif
+}
+
+static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t cap = dict_capacity(ctx);
+
+	if(start > cap) {
+		return 0;
+	}
+
+	return len <= cap - start;
+}
+
+#if ZF_ENABLE_DYNAMIC_DICT
+static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t needed;
+	size_t new_cap;
+	uint8_t *new_dict;
+
+	if(start > (size_t)-1 - len) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+
+	needed = start + len;
+	if(needed <= ctx->dict_cap) {
+		return;
+	}
+
+	new_cap = ctx->dict_cap;
+	while(new_cap < needed) {
+		if(new_cap > (size_t)-1 - ZF_DICT_SIZE) {
+			zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		}
+		new_cap += ZF_DICT_SIZE;
+	}
+
+	new_dict = (uint8_t *)realloc(ctx->dict, new_cap);
+	if(new_dict == NULL) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+
+	memset(new_dict + ctx->dict_cap, 0, new_cap - ctx->dict_cap);
+	ctx->dict = new_dict;
+	ctx->dict_cap = new_cap;
+}
+#endif
 
 
 /* Tracing functions. If disabled, the trace() function is replaced by an empty
@@ -219,7 +281,11 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 {
 	const uint8_t *p = (const uint8_t *)buf;
 	size_t i = len;
-	CHECK(ctx, addr < ZF_DICT_SIZE-len, ZF_ABORT_OUTSIDE_MEM);
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ensure_dict_capacity(ctx, addr, len);
+	#else
+	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	#endif
 	while(i--) ctx->dict[addr++] = *p++;
 	return len;
 }
@@ -228,7 +294,7 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
-	CHECK(ctx, addr < ZF_DICT_SIZE-len, ZF_ABORT_OUTSIDE_MEM);
+	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	while(len--) *p++ = ctx->dict[addr++];
 }
 
@@ -511,7 +577,7 @@ static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 {
 	if(addr < ZF_USERVAR_COUNT) {
 		/* Special case for user variables */
-		*val = ctx->uservar[addr];
+		*val = USERVAR(ctx)[addr];
 		return 1;
 	} else {
 		/* General case for dictionary memory */
@@ -597,7 +663,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			addr = zf_pop(ctx);
 			d1 = zf_pop(ctx);
 			if(addr < ZF_USERVAR_COUNT) {
-				ctx->uservar[addr] = d1;
+				USERVAR(ctx)[addr] = d1;
 			} else {
 				dict_put_cell_typed(ctx, addr, d1, size);
 			}
@@ -894,7 +960,16 @@ static void handle_char(zf_ctx *ctx, char c)
 
 void zf_init(zf_ctx *ctx, int enable_trace)
 {
-	ctx->uservar = (zf_addr *)ctx->dict;
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ctx->dict = (uint8_t *)malloc(ZF_DICT_SIZE);
+	ctx->dict_cap = ZF_DICT_SIZE;
+	if(ctx->dict == NULL) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+	memset(ctx->dict, 0, ctx->dict_cap);
+	#else
+	memset(ctx->dict, 0, sizeof(ctx->dict));
+	#endif
 	ctx->read_len = 0;
 	HERE(ctx) = ZF_USERVAR_COUNT * sizeof(zf_addr);
 	LATEST(ctx) = 0;
@@ -903,6 +978,17 @@ void zf_init(zf_ctx *ctx, int enable_trace)
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+}
+
+void zf_free(zf_ctx *ctx)
+{
+	#if ZF_ENABLE_DYNAMIC_DICT
+	free(ctx->dict);
+	ctx->dict = NULL;
+	ctx->dict_cap = 0;
+	#else
+	(void)ctx;
+	#endif
 }
 
 
@@ -934,7 +1020,6 @@ static void add_uservar(zf_ctx *ctx, const char *name, zf_addr addr)
 	dict_add_lit(ctx, addr);
 	dict_add_op(ctx, PRIM_EXIT);
 }
-
 
 void zf_bootstrap(zf_ctx *ctx)
 {
@@ -985,8 +1070,48 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 
 void *zf_dump(zf_ctx *ctx, size_t *len)
 {
-	if(len) *len = sizeof(ctx->dict);
+	if(len) *len = dict_capacity(ctx);
 	return ctx->dict;
+}
+
+size_t zf_dict_size(zf_ctx *ctx)
+{
+	return (size_t)HERE(ctx);
+}
+
+size_t zf_dict_capacity(zf_ctx *ctx)
+{
+	return dict_capacity(ctx);
+}
+
+zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
+{
+	zf_addr trace = TRACE(ctx);
+
+	if(len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ensure_dict_capacity(ctx, 0, len);
+	#else
+	if(!dict_has_range(ctx, 0, len)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#endif
+
+	memcpy(ctx->dict, buf, len);
+	TRACE(ctx) = trace;
+	COMPILING(ctx) = 0;
+	POSTPONE(ctx) = 0;
+	DSP(ctx) = 0;
+	RSP(ctx) = 0;
+
+	if((size_t)HERE(ctx) > dict_capacity(ctx)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+
+	return ZF_OK;
 }
 
 zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v)
@@ -994,7 +1119,7 @@ zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v)
 	zf_result result = ZF_ABORT_INVALID_USERVAR;
 
 	if (uv < ZF_USERVAR_COUNT) {
-		ctx->uservar[uv] = v;
+		USERVAR(ctx)[uv] = v;
 		result = ZF_OK;
 	}
 
@@ -1007,7 +1132,7 @@ zf_result zf_uservar_get(zf_ctx *ctx, zf_uservar_id uv, zf_cell *v)
 
 	if (uv < ZF_USERVAR_COUNT) {
 		if (v != NULL) {
-			*v = ctx->uservar[uv];
+			*v = USERVAR(ctx)[uv];
 		}
 		result = ZF_OK;
 	}
@@ -1018,4 +1143,3 @@ zf_result zf_uservar_get(zf_ctx *ctx, zf_uservar_id uv, zf_cell *v)
 /*
  * End
  */
-
