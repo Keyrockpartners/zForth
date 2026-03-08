@@ -6,3 +6,5 @@ go
 zforth
 zforth.save
 .zforth.hist
+openspec
+.opencode
