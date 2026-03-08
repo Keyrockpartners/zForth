@@ -50,7 +50,7 @@ typedef enum {
 	PRIM_JMP,     PRIM_JMP0,      PRIM_TICK, PRIM_COMMENT, PRIM_PUSHR,    PRIM_POPR,
 	PRIM_EQUAL,   PRIM_SYS,       PRIM_PICK, PRIM_COMMA,   PRIM_KEY,      PRIM_LITS,
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
-	PRIM_LITERAL,
+	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE,
 	PRIM_COUNT
 } zf_prim;
 
@@ -61,7 +61,12 @@ static const char prim_names[] =
 	_("jmp")     _("jmp0")       _("'")     _("_(")    _(">r")        _("r>")
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
-	_("_literal");
+	_("_literal") _("checkpoint!") _("_restore!");
+
+typedef struct {
+	zf_addr here;
+	zf_addr latest;
+} zf_checkpoint;
 
 
 /* User variables are variables which are shared between forth and C. From
@@ -91,6 +96,33 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len);
+
+static void checkpoint_save(zf_ctx *ctx, zf_addr addr)
+{
+	zf_checkpoint cp;
+
+	cp.here = HERE(ctx);
+	cp.latest = LATEST(ctx);
+	dict_put_bytes(ctx, addr, &cp, sizeof(cp));
+}
+
+static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
+{
+	zf_checkpoint cp;
+
+	dict_get_bytes(ctx, addr, &cp, sizeof(cp));
+	CHECK(ctx, dict_has_range(ctx, cp.here, 0), ZF_ABORT_OUTSIDE_MEM);
+	CHECK(ctx, cp.latest <= cp.here, ZF_ABORT_INTERNAL_ERROR);
+	HERE(ctx) = cp.here;
+	LATEST(ctx) = cp.latest;
+	ctx->input_state = ZF_INPUT_INTERPRET;
+	ctx->ip = 0;
+	ctx->read_len = 0;
+	COMPILING(ctx) = 0;
+	POSTPONE(ctx) = 0;
+	DSP(ctx) = 0;
+	RSP(ctx) = 0;
+}
 
 static size_t dict_capacity(const zf_ctx *ctx)
 {
@@ -631,6 +663,14 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			/* FIXME: else abort "!compiling"? */
 			break;
 
+		case PRIM_CHECKPOINT:
+			checkpoint_save(ctx, zf_pop(ctx));
+			break;
+
+		case PRIM_RESTORE:
+			checkpoint_restore(ctx, zf_pop(ctx));
+			break;
+
 		case PRIM_LIT:
 			/* At run time, push next value from dictionary on stack */
 			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
@@ -1021,6 +1061,14 @@ static void add_uservar(zf_ctx *ctx, const char *name, zf_addr addr)
 	dict_add_op(ctx, PRIM_EXIT);
 }
 
+static void add_const(zf_ctx *ctx, const char *name, zf_cell value)
+{
+	create(ctx, name, 0);
+	dict_add_lit(ctx, value);
+	dict_add_op(ctx, PRIM_EXIT);
+}
+
+
 void zf_bootstrap(zf_ctx *ctx)
 {
 
@@ -1036,6 +1084,8 @@ void zf_bootstrap(zf_ctx *ctx)
 	for(p=uservar_names; *p; p+=strlen(p)+1) {
 		add_uservar(ctx, p, i++);
 	}
+
+	add_const(ctx, "checkpoint-size", sizeof(zf_checkpoint));
 }
 
 #else 
