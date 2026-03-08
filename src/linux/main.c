@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <math.h>
+#include <ctype.h>
 
 #ifdef USE_READLINE
 #include <readline/readline.h>
@@ -148,6 +149,115 @@ static void load(zf_ctx *ctx, const char *fname)
 
 
 /*
+ * Emit dictionary as C header
+ */
+
+static int is_ident_start(int c)
+{
+	return isalpha((unsigned char)c) || c == '_';
+}
+
+static int is_ident_char(int c)
+{
+	return isalnum((unsigned char)c) || c == '_';
+}
+
+static void make_symbol_name(const char *input, char *output, size_t output_size)
+{
+	size_t i = 0;
+
+	if(output_size == 0) {
+		return;
+	}
+
+	if(input == NULL || input[0] == '\0') {
+		input = "zforth_dict";
+	}
+
+	if(!is_ident_start((unsigned char)input[0])) {
+		output[i++] = '_';
+	}
+
+	for(; *input != '\0' && i + 1 < output_size; input++) {
+		output[i++] = is_ident_char((unsigned char)*input) ? *input : '_';
+	}
+
+	output[i] = '\0';
+
+	if(output[0] == '\0') {
+		strncpy(output, "zforth_dict", output_size - 1);
+		output[output_size - 1] = '\0';
+	}
+}
+
+static void make_include_guard(const char *symbol, char *guard, size_t guard_size)
+{
+	size_t i;
+
+	if(guard_size == 0) {
+		return;
+	}
+
+	for(i = 0; symbol[i] != '\0' && i + 1 < guard_size; i++) {
+		char c = symbol[i];
+		guard[i] = isalnum((unsigned char)c) ? (char)toupper((unsigned char)c) : '_';
+	}
+
+	if(i + sizeof("_H") <= guard_size) {
+		guard[i++] = '_';
+		guard[i++] = 'H';
+	}
+
+	guard[i] = '\0';
+
+	if(guard[0] == '\0') {
+		strncpy(guard, "ZFORTH_DICT_H", guard_size - 1);
+		guard[guard_size - 1] = '\0';
+	}
+}
+
+static void emit_header(zf_ctx *ctx, const char *name)
+{
+	char symbol[128];
+	char guard[132];
+	const unsigned char *dict = (const unsigned char *)zf_dump(ctx, NULL);
+	size_t len = zf_dict_size(ctx);
+	size_t i;
+
+	make_symbol_name(name, symbol, sizeof(symbol));
+	make_include_guard(symbol, guard, sizeof(guard));
+
+	printf("#ifndef %s\n", guard);
+	printf("#define %s\n\n", guard);
+	printf("#include <stddef.h>\n\n");
+	printf("static const unsigned char %s[] = {\n", symbol);
+
+	for(i = 0; i < len; i++) {
+		if((i % 12) == 0) {
+			printf("    ");
+		}
+
+		printf("0x%02x", dict[i]);
+		if(i + 1 < len) {
+			printf(", ");
+		}
+
+		if((i % 12) == 11 || i + 1 == len) {
+			printf("\n");
+		}
+	}
+
+	if(len == 0) {
+		printf("\n");
+	}
+
+	printf("};\n");
+	printf("static const size_t %s_len = sizeof(%s);\n\n", symbol, symbol);
+	printf("#endif\n");
+}
+
+
+/*
  * Sys callback function
  */
 
@@ -246,6 +356,7 @@ void usage(void)
 		"\n"
 		"Options:\n"
 		"   -h         show help\n"
+		"   -H NAME    write loaded dictionary as C header to stdout\n"
 		"   -t         enable tracing\n"
 		"   -l FILE    load dictionary from FILE\n"
 		"   -q         quiet\n"
@@ -264,12 +375,16 @@ int main(int argc, char **argv)
 	int trace = 0;
 	int line = 0;
 	int quiet = 0;
+	const char *header_name = NULL;
 	const char *fname_load = NULL;
 
 	/* Parse command line options */
 
-	while((c = getopt(argc, argv, "hl:tq")) != -1) {
+	while((c = getopt(argc, argv, "hH:l:tq")) != -1) {
 		switch(c) {
+			case 'H':
+				header_name = optarg;
+				break;
 			case 't':
 				trace = 1;
 				break;
@@ -309,6 +424,13 @@ int main(int argc, char **argv)
 
 	for(i=0; i<argc; i++) {
 		include(ctx, argv[i]);
+	}
+
+	if(header_name) {
+		emit_header(ctx, header_name);
+		zf_free(ctx);
+		free(ctx);
+		return 0;
 	}
 
 	if(!quiet) {
