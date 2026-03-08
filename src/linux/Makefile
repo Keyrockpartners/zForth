@@ -10,7 +10,11 @@ CC	:= $(CROSS)gcc
 VPATH   := ../zforth
 CFLAGS	+= -I. -I../zforth
 CFLAGS  += -Os -g -pedantic -MMD
-CFLAGS  += -fsanitize=address -Wall -Wextra -Werror -Wno-unused-parameter -Wno-clobbered -Wno-unused-result
+CFLAGS  += -fsanitize=address -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-result
+
+ifneq ($(findstring clang,$(shell $(CC) --version 2>/dev/null)),clang)
+CFLAGS  += -Wno-clobbered
+endif
 LDFLAGS	+= -fsanitize=address -g 
 
 LIBS	+= -lm
@@ -32,4 +36,3 @@ lint:
 		$(SRC)
 
 -include $(DEPS)
-
