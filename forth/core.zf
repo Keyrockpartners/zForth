@@ -56,7 +56,7 @@
 ( memory management )
 
 : allot  h +!  ;
-: var : ' lit , here 5 allot here swap ! 5 allot postpone ; ;
+: var : ' lit , here var-max-size allot here swap ! var-max-size allot postpone ; ;
 : const : ' lit , , postpone ; ;
 : constant >r : r> postpone literal postpone ; ;
 : variable >r here r> postpone , constant ;
@@ -118,5 +118,4 @@
 (
 vi: ts=3 sw=3 ft=forth
 )
-
 

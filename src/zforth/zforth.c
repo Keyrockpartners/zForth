@@ -1085,6 +1085,7 @@ void zf_bootstrap(zf_ctx *ctx)
 		add_uservar(ctx, p, i++);
 	}
 
+	add_const(ctx, "var-max-size", 1 + sizeof(zf_cell));
 	add_const(ctx, "checkpoint-size", sizeof(zf_checkpoint));
 }
 
