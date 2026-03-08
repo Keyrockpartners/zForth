@@ -37,9 +37,9 @@
  * integer type that suits your needs, or 'float' or 'double' if you need
  * floating point numbers */
 
-typedef float zf_cell;
-#define ZF_CELL_FMT "%.14g"
-#define ZF_SCAN_FMT "%f"
+typedef double zf_cell;
+#define ZF_CELL_FMT "%.17g"
+#define ZF_SCAN_FMT "%lf"
 
 /* zf_int use for bitops, some arch int type width is less than register width,
    it will cause sign fill, so we need manual specify it */
@@ -56,7 +56,7 @@ typedef unsigned int zf_addr;
  * number of elements of type zf_cell */
 
 #define ZF_DICT_SIZE 4096
-#define ZF_DSTACK_SIZE 32
-#define ZF_RSTACK_SIZE 32
+#define ZF_DSTACK_SIZE 128
+#define ZF_RSTACK_SIZE 128
 
 #endif
