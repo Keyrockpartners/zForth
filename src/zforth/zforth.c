@@ -351,23 +351,25 @@ static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 
 static zf_addr dict_put_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell v, zf_mem_size size)
 {
-	unsigned int vi = v;
 	uint8_t t[2];
 
 	trace(ctx, "\n+" ZF_ADDR_FMT " " ZF_ADDR_FMT, addr, (zf_addr)v);
 
 	if(size == ZF_MEM_SIZE_VAR) {
-		if((v - vi) == 0) {
-			if(vi < 128) {
-				trace(ctx, " ¹");
-				t[0] = vi;
-				return dict_put_bytes(ctx, addr, t, 1);
-			}
-			if(vi < 16384) {
-				trace(ctx, " ²");
-				t[0] = (vi >> 8) | 0x80;
-				t[1] = vi;
-				return dict_put_bytes(ctx, addr, t, sizeof(t));
+		if(v >= 0 && v < 16384) {
+			unsigned int vi = (unsigned int)v;
+			if((zf_cell)vi == v) {
+				if(vi < 128) {
+					trace(ctx, " ¹");
+					t[0] = vi;
+					return dict_put_bytes(ctx, addr, t, 1);
+				}
+				if(vi < 16384) {
+					trace(ctx, " ²");
+					t[0] = (vi >> 8) | 0x80;
+					t[1] = vi;
+					return dict_put_bytes(ctx, addr, t, sizeof(t));
+				}
 			}
 		}
 	}
@@ -380,12 +382,12 @@ static zf_addr dict_put_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell v, zf_mem_
 	} 
 	
 	PUT(ZF_MEM_SIZE_CELL, zf_cell, v);
-	PUT(ZF_MEM_SIZE_U8, uint8_t, vi);
-	PUT(ZF_MEM_SIZE_U16, uint16_t, vi);
-	PUT(ZF_MEM_SIZE_U32, uint32_t, vi);
-	PUT(ZF_MEM_SIZE_S8, int8_t, vi);
-	PUT(ZF_MEM_SIZE_S16, int16_t, vi);
-	PUT(ZF_MEM_SIZE_S32, int32_t, vi);
+	PUT(ZF_MEM_SIZE_U8, uint8_t, v);
+	PUT(ZF_MEM_SIZE_U16, uint16_t, v);
+	PUT(ZF_MEM_SIZE_U32, uint32_t, v);
+	PUT(ZF_MEM_SIZE_S8, int8_t, v);
+	PUT(ZF_MEM_SIZE_S16, int16_t, v);
+	PUT(ZF_MEM_SIZE_S32, int32_t, v);
 
 	zf_abort(ctx, ZF_ABORT_INVALID_SIZE);
 	return 0;

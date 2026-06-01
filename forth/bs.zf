@@ -1,5 +1,4 @@
 ( custom words )
-
 : dropall 0 dsp ! ;
 : chkpt here chkpt-size allot >r : ' dropall , r> dup >r postpone literal ' chkpt-restore , postpone ; postpone immediate r> chkpt! ;
 : 2drop drop drop ;
