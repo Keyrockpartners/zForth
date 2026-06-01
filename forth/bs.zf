@@ -5,3 +5,13 @@
 : 2dup over over ;
 : 2swap rot >r rot r> ;
 : 2over 3 pick 3 pick ;
+: log" compiling @ if postpone s" ' tell , else here postpone s" tell h ! fi ; immediate
+: fmt 132 sys ;
+: fmt" compiling @ if postpone s" ' fmt , else here >r postpone s" fmt r> h ! fi ; immediate
+: floor 133 sys ;
+: ceil 134 sys ;
+: round 135 sys ;
+: trunc 136 sys ;
+
+
+

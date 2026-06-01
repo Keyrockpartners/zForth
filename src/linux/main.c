@@ -257,6 +257,86 @@ static void emit_header(zf_ctx *ctx, const char *name)
 }
 
 
+#define ZF_FMT_MAX_ARG_CELLS 16
+
+static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
+{
+	size_t cap = zf_dict_capacity(ctx);
+	if(!(addr >= 0) || !(len >= 0) || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+	return (const uint8_t *)zf_dump(ctx, NULL) + (size_t)addr;
+}
+
+static void fmt_syscall(zf_ctx *ctx)
+{
+	zf_cell fmt_len_cell = zf_pop(ctx);
+	zf_cell fmt_addr_cell = zf_pop(ctx);
+	const uint8_t *fmt = checked_dict_range(ctx, fmt_addr_cell, fmt_len_cell);
+	size_t fmt_len = (size_t)fmt_len_cell;
+	int cells = 0;
+
+	for(size_t i = 0; i < fmt_len; i++) {
+		if(fmt[i] == '%' && i + 1 < fmt_len) {
+			switch(fmt[++i]) {
+				case 's': cells += 2; break;
+				case 'd':
+				case 'n':
+				case 'c': cells += 1; break;
+				default: break;
+			}
+		}
+	}
+
+	if(cells > ZF_FMT_MAX_ARG_CELLS) {
+		zf_abort(ctx, ZF_ABORT_EXTERNAL);
+	}
+
+	zf_cell args[ZF_FMT_MAX_ARG_CELLS];
+	for(int i = 0; i < cells; i++) {
+		args[i] = zf_pop(ctx);
+	}
+
+	int ai = cells - 1;
+	for(size_t i = 0; i < fmt_len; i++) {
+		if(fmt[i] != '%') {
+			putchar((char)fmt[i]);
+			continue;
+		}
+
+		if(i + 1 >= fmt_len) {
+			putchar('%');
+			continue;
+		}
+
+		switch(fmt[++i]) {
+			case '%':
+				putchar('%');
+				break;
+			case 'd':
+			case 'n':
+				printf(ZF_CELL_FMT, args[ai--]);
+				break;
+			case 'c':
+				putchar((char)args[ai--]);
+				break;
+			case 's': {
+				zf_cell addr = args[ai--];
+				zf_cell len = args[ai--];
+				const uint8_t *s = checked_dict_range(ctx, addr, len);
+				(void)fwrite(s, 1, (size_t)len, stdout);
+				break;
+			}
+			default:
+				putchar('%');
+				putchar((char)fmt[i]);
+				break;
+		}
+	}
+
+	fflush(stdout);
+}
+
 /*
  * Sys callback function
  */
@@ -310,6 +390,26 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 		
 		case ZF_SYSCALL_USER + 3:
 			save(ctx, "zforth.save");
+			break;
+
+		case ZF_SYSCALL_USER + 4:
+			fmt_syscall(ctx);
+			break;
+
+		case ZF_SYSCALL_USER + 5:
+			zf_push(ctx, floor(zf_pop(ctx)));
+			break;
+
+		case ZF_SYSCALL_USER + 6:
+			zf_push(ctx, ceil(zf_pop(ctx)));
+			break;
+
+		case ZF_SYSCALL_USER + 7:
+			zf_push(ctx, round(zf_pop(ctx)));
+			break;
+
+		case ZF_SYSCALL_USER + 8:
+			zf_push(ctx, trunc(zf_pop(ctx)));
 			break;
 
 		default:
