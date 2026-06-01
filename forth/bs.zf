@@ -1,3 +1,7 @@
+( Load the core library. Use the syscall directly because include is defined by core.zf. )
+130 sys forth/core.zf
+include forth/memaccess.zf
+
 ( custom words )
 : dropall 0 dsp ! ;
 : chkpt here chkpt-size allot >r : ' dropall , r> dup >r postpone literal ' chkpt-restore , postpone ; postpone immediate r> chkpt! ;
@@ -5,6 +9,8 @@
 : 2dup over over ;
 : 2swap rot >r rot r> ;
 : 2over 3 pick 3 pick ;
+: max  over over < if swap fi drop ;
+: min  over over > if swap fi drop ;
 : log" compiling @ if postpone s" ' tell , else here postpone s" tell h ! fi ; immediate
 : fmt 132 sys ;
 : fmt" compiling @ if postpone s" ' fmt , else here >r postpone s" fmt r> h ! fi ; immediate
