@@ -1092,7 +1092,7 @@ void zf_bootstrap(zf_ctx *ctx)
 }
 
 #else 
-void zf_bootstrap(void) {}
+void zf_bootstrap(zf_ctx *ctx) { (void)ctx; }
 #endif
 
 

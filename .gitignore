@@ -8,3 +8,4 @@ zforth.save
 .zforth.hist
 openspec
 .opencode
+zforth_dict.h
