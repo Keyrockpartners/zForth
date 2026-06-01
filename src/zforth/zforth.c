@@ -242,7 +242,21 @@ static const char *op_name(zf_ctx *ctx, zf_addr addr) { return NULL; }
 
 void zf_abort(zf_ctx *ctx, zf_result reason)
 {
-	longjmp(ctx->jmpbuf, reason);
+	if(ctx != NULL) {
+		if(reason == ZF_OK) {
+			reason = ZF_ABORT_INTERNAL_ERROR;
+		}
+		ctx->abort_reason = reason;
+		if(ctx->abort_jmp_valid > 0) {
+			longjmp(ctx->jmpbuf, reason);
+		}
+	}
+
+	/* zf_abort() is only recoverable while a caller has installed a
+	 * setjmp handler (zf_eval(), or another protected wrapper). Falling
+	 * through would let callers continue after failed boundary checks, so
+	 * fail hard instead of longjmp'ing through an uninitialised jmp_buf. */
+	abort();
 }
 
 
@@ -1000,19 +1014,30 @@ static void handle_char(zf_ctx *ctx, char c)
  * Initialisation
  */
 
-void zf_init(zf_ctx *ctx, int enable_trace)
+zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 {
+	if(ctx == NULL) {
+		return ZF_ABORT_INTERNAL_ERROR;
+	}
+
+	ctx->input_state = ZF_INPUT_INTERPRET;
+	ctx->ip = 0;
+	ctx->abort_jmp_valid = 0;
+	ctx->abort_reason = ZF_OK;
+	ctx->read_len = 0;
+
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ctx->dict = (uint8_t *)malloc(ZF_DICT_SIZE);
 	ctx->dict_cap = ZF_DICT_SIZE;
 	if(ctx->dict == NULL) {
-		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		ctx->dict_cap = 0;
+		return ZF_ABORT_OUTSIDE_MEM;
 	}
 	memset(ctx->dict, 0, ctx->dict_cap);
 	#else
 	memset(ctx->dict, 0, sizeof(ctx->dict));
 	#endif
-	ctx->read_len = 0;
+
 	HERE(ctx) = ZF_USERVAR_COUNT * sizeof(zf_addr);
 	LATEST(ctx) = 0;
 	TRACE(ctx) = enable_trace;
@@ -1020,6 +1045,16 @@ void zf_init(zf_ctx *ctx, int enable_trace)
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+
+	return ZF_OK;
+}
+
+void zf_init(zf_ctx *ctx, int enable_trace)
+{
+	zf_result r = zf_init_checked(ctx, enable_trace);
+	if(r != ZF_OK) {
+		zf_abort(ctx, r);
+	}
 }
 
 void zf_free(zf_ctx *ctx)
@@ -1102,17 +1137,36 @@ void zf_bootstrap(zf_ctx *ctx) { (void)ctx; }
 
 zf_result zf_eval(zf_ctx *ctx, const char *buf)
 {
-	zf_result r = (zf_result)setjmp(ctx->jmpbuf);
+	zf_result r;
+
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(ctx == NULL || ctx->dict == NULL) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#else
+	if(ctx == NULL) {
+		return ZF_ABORT_INTERNAL_ERROR;
+	}
+	#endif
+	if(buf == NULL) {
+		return ZF_ABORT_EXTERNAL;
+	}
+
+	ctx->abort_jmp_valid++;
+	r = (zf_result)setjmp(ctx->jmpbuf);
 
 	if(r == ZF_OK) {
 		for(;;) {
 			handle_char(ctx, *buf);
 			if(*buf == '\0') {
+				ctx->abort_jmp_valid--;
+				ctx->abort_reason = ZF_OK;
 				return ZF_OK;
 			}
 			buf ++;
 		}
 	} else {
+		ctx->abort_jmp_valid--;
 		COMPILING(ctx) = 0;
 		RSP(ctx) = 0;
 		DSP(ctx) = 0;
@@ -1139,11 +1193,22 @@ size_t zf_dict_capacity(zf_ctx *ctx)
 
 zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
 {
-	zf_addr trace = TRACE(ctx);
+	zf_addr trace;
 
-	if(len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(ctx == NULL || ctx->dict == NULL) {
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
+	#else
+	if(ctx == NULL) {
+		return ZF_ABORT_INTERNAL_ERROR;
+	}
+	#endif
+	if(buf == NULL || len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+
+	trace = TRACE(ctx);
 
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ensure_dict_capacity(ctx, 0, len);

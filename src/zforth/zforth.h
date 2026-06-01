@@ -78,6 +78,8 @@ typedef struct {
 
 	/* setjmp env for handling aborts */
 	jmp_buf jmpbuf;
+	int abort_jmp_valid;
+	zf_result abort_reason;
 
 	/* Input buffer */
 	char read_buf[32];
@@ -96,6 +98,7 @@ typedef struct {
 
 /* ZForth API functions */
 
+zf_result zf_init_checked(zf_ctx *ctx, int trace);
 void zf_init(zf_ctx *ctx, int trace);
 void zf_free(zf_ctx *ctx);
 void zf_bootstrap(zf_ctx *ctx);

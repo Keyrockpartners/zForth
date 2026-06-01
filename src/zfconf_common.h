@@ -27,7 +27,7 @@
  * leave this out and start by loading a cross-compiled dictionary instead.
  * Enabling adds a few hundred bytes to the .text and .rodata segments */
 #ifndef ZF_ENABLE_BOOTSTRAP
-#define ZF_ENABLE_BOOTSTRAP 1
+#define ZF_ENABLE_BOOTSTRAP 0
 #endif
 
 
