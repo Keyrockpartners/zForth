@@ -61,7 +61,7 @@ static const char prim_names[] =
 	_("jmp")     _("jmp0")       _("'")     _("_(")    _(">r")        _("r>")
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
-	_("_literal") _("checkpoint!") _("_restore!");
+	_("_literal") _("chkpt!") _("chkpt-restore");
 
 typedef struct {
 	zf_addr here;
@@ -1086,7 +1086,7 @@ void zf_bootstrap(zf_ctx *ctx)
 	}
 
 	add_const(ctx, "var-max-size", 1 + sizeof(zf_cell));
-	add_const(ctx, "checkpoint-size", sizeof(zf_checkpoint));
+	add_const(ctx, "chkpt-size", sizeof(zf_checkpoint));
 }
 
 #else 

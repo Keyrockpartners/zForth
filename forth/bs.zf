@@ -1,7 +1,7 @@
 ( custom words )
 
-: checkpoint here checkpoint-size allot dup checkpoint! ;
-: clearstack 0 dsp ! ;
+: dropall 0 dsp ! ;
+: chkpt here chkpt-size allot >r : ' dropall , r> dup >r postpone literal ' chkpt-restore , postpone ; postpone immediate r> chkpt! ;
 : 2drop drop drop ;
 : 2dup over over ;
 : 2swap rot >r rot r> ;
