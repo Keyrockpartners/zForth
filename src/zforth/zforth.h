@@ -32,7 +32,8 @@ typedef enum {
 	ZF_ABORT_INVALID_SIZE,
 	ZF_ABORT_DIVISION_BY_ZERO,
 	ZF_ABORT_INVALID_USERVAR,
-	ZF_ABORT_EXTERNAL
+	ZF_ABORT_EXTERNAL,
+	ZF_ABORT_INVALID_CELL
 } zf_result;
 
 typedef enum {
@@ -45,8 +46,35 @@ typedef enum {
 	ZF_SYSCALL_EMIT,
 	ZF_SYSCALL_PRINT,
 	ZF_SYSCALL_TELL,
-	ZF_SYSCALL_USER = 128
+	ZF_SYSCALL_USER = 128,
+	ZF_SYSCALL_OS_TO_STR = ZF_SYSCALL_USER + 16,
+	ZF_SYSCALL_OS_FROM_STR,
+	ZF_SYSCALL_OS_CALL,
+	ZF_SYSCALL_OS_SEND,
+	ZF_SYSCALL_OS_GC,
+	ZF_SYSCALL_OS_TYPE
 } zf_syscall_id;
+
+#if ZFORTH_EXT_OS_OBJECTS
+#if !defined(__STDC_IEC_559__) && !defined(__cplusplus)
+/* Most embedded toolchains do not define __STDC_IEC_559__ even for IEEE-754
+ * doubles, so the hard check below is sizeof-based. This warning documents the
+ * representation assumption for less strict compilers. */
+#endif
+#if !defined(ZF_CELL_TYPE) || !defined(ZF_SCAN_FMT)
+#error "ZFORTH_EXT_OS_OBJECTS requires the shared zfconf path with zf_cell configured as double"
+#endif
+typedef char zf_ext_objects_require_64_bit_cell[(sizeof(zf_cell) == sizeof(uint64_t)) ? 1 : -1];
+typedef uint32_t zf_ext_id;
+typedef uint8_t zf_ext_kind;
+struct zf_ctx;
+typedef struct zf_ctx zf_ctx;
+typedef struct {
+	zf_addr addr;
+	zf_cell cell;
+} zf_ext_dict_owner;
+typedef void (*zf_ext_root_cb)(zf_ctx *ctx, zf_cell cell, void *user);
+#endif
 
 typedef enum {
     ZF_USERVAR_HERE = 0,
@@ -61,7 +89,7 @@ typedef enum {
 } zf_uservar_id;
 
 
-typedef struct {
+typedef struct zf_ctx {
 	/* Stacks and dictionary memory */
 	zf_cell rstack[ZF_RSTACK_SIZE];
 	zf_cell dstack[ZF_DSTACK_SIZE];
@@ -87,6 +115,11 @@ typedef struct {
 
 	/* Name buffer */
 	char name_buf[32];
+
+#if ZFORTH_EXT_OS_OBJECTS
+	zf_ext_dict_owner ext_owners[ZF_EXT_DICT_OWNERS_MAX];
+	uint16_t ext_owner_count;
+#endif
 
 } zf_ctx;
 
@@ -115,6 +148,15 @@ zf_cell zf_pick(zf_ctx *ctx, zf_addr n);
 
 zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v);
 zf_result zf_uservar_get(zf_ctx *ctx, zf_uservar_id uv, zf_cell *v);
+
+#if ZFORTH_EXT_OS_OBJECTS
+int zf_cell_is_ext(zf_cell v);
+zf_ext_kind zf_cell_ext_kind(zf_cell v);
+zf_ext_id zf_cell_ext_id(zf_cell v);
+zf_cell zf_cell_make_ext(zf_ext_kind kind, zf_ext_id id);
+int zf_cell_equal(zf_cell a, zf_cell b);
+void zf_ext_foreach_root(zf_ctx *ctx, zf_ext_root_cb cb, void *user);
+#endif
 
 /* Host provides these functions */
 

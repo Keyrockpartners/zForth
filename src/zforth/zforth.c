@@ -9,6 +9,74 @@
 
 /* Flags and length encoded in words */
 
+#if ZFORTH_EXT_OS_OBJECTS
+#define ZF_EXT_TAG_MASK UINT64_C(0x7fffff0000000000)
+#define ZF_EXT_TAG_BITS UINT64_C(0x7ff85a0000000000)
+#define ZF_EXT_KIND_SHIFT 32
+#define ZF_EXT_ID_MASK UINT64_C(0xffffffff)
+
+static uint64_t zf_cell_bits(zf_cell v)
+{
+	uint64_t bits;
+	memcpy(&bits, &v, sizeof(bits));
+	return bits;
+}
+
+static zf_cell zf_cell_from_bits(uint64_t bits)
+{
+	zf_cell v;
+	memcpy(&v, &bits, sizeof(v));
+	return v;
+}
+
+int zf_cell_is_ext(zf_cell v)
+{
+	return (zf_cell_bits(v) & ZF_EXT_TAG_MASK) == ZF_EXT_TAG_BITS;
+}
+
+zf_ext_kind zf_cell_ext_kind(zf_cell v)
+{
+	return (zf_ext_kind)((zf_cell_bits(v) >> ZF_EXT_KIND_SHIFT) & 0xffu);
+}
+
+zf_ext_id zf_cell_ext_id(zf_cell v)
+{
+	return (zf_ext_id)(zf_cell_bits(v) & ZF_EXT_ID_MASK);
+}
+
+zf_cell zf_cell_make_ext(zf_ext_kind kind, zf_ext_id id)
+{
+	uint64_t bits = ZF_EXT_TAG_BITS | ((uint64_t)kind << ZF_EXT_KIND_SHIFT) | (uint64_t)id;
+	return zf_cell_from_bits(bits);
+}
+
+int zf_cell_equal(zf_cell a, zf_cell b)
+{
+	if(zf_cell_is_ext(a) || zf_cell_is_ext(b)) {
+		return zf_cell_bits(a) == zf_cell_bits(b);
+	}
+	return a == b;
+}
+
+static zf_cell zf_require_num(zf_ctx *ctx, zf_cell v)
+{
+	if(zf_cell_is_ext(v)) {
+		zf_abort(ctx, ZF_ABORT_INVALID_CELL);
+	}
+	return v;
+}
+
+static zf_addr zf_num_to_addr(zf_ctx *ctx, zf_cell v)
+{
+	return (zf_addr)zf_require_num(ctx, v);
+}
+
+#else
+#define zf_require_num(ctx, v) (v)
+#define zf_num_to_addr(ctx, v) ((zf_addr)(v))
+#define zf_cell_equal(a, b) ((a) == (b))
+#endif
+
 #define ZF_FLAG_IMMEDIATE (1<<6)
 #define ZF_FLAG_PRIM      (1<<5)
 #define ZF_FLAG_LEN(v)    (v & 0x1f)
@@ -97,6 +165,89 @@ static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len);
 
+#if ZFORTH_EXT_OS_OBJECTS
+static int ext_owner_find(zf_ctx *ctx, zf_addr addr)
+{
+	uint16_t i;
+	for(i = 0; i < ctx->ext_owner_count; ++i) {
+		if(ctx->ext_owners[i].addr == addr) return (int)i;
+	}
+	return -1;
+}
+
+static void ext_owner_remove_index(zf_ctx *ctx, uint16_t idx)
+{
+	if(idx < ctx->ext_owner_count) {
+		ctx->ext_owner_count--;
+		ctx->ext_owners[idx] = ctx->ext_owners[ctx->ext_owner_count];
+	}
+}
+
+static void ext_owner_remove_addr(zf_ctx *ctx, zf_addr addr)
+{
+	int idx = ext_owner_find(ctx, addr);
+	if(idx >= 0) ext_owner_remove_index(ctx, (uint16_t)idx);
+}
+
+static void ext_owner_remove_range(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	uint16_t i = 0;
+	while(i < ctx->ext_owner_count) {
+		zf_addr owner_addr = ctx->ext_owners[i].addr;
+		if(owner_addr >= addr && (size_t)(owner_addr - addr) < len) {
+			ext_owner_remove_index(ctx, i);
+		} else {
+			i++;
+		}
+	}
+}
+
+static void ext_owner_put(zf_ctx *ctx, zf_addr addr, zf_cell cell)
+{
+	int idx = ext_owner_find(ctx, addr);
+	if(idx >= 0) {
+		ctx->ext_owners[idx].cell = cell;
+		return;
+	}
+	CHECK(ctx, ctx->ext_owner_count < ZF_EXT_DICT_OWNERS_MAX, ZF_ABORT_OUTSIDE_MEM);
+	ctx->ext_owners[ctx->ext_owner_count].addr = addr;
+	ctx->ext_owners[ctx->ext_owner_count].cell = cell;
+	ctx->ext_owner_count++;
+}
+
+static void ext_owner_prune_from(zf_ctx *ctx, zf_addr here)
+{
+	uint16_t i = 0;
+	while(i < ctx->ext_owner_count) {
+		if(ctx->ext_owners[i].addr >= here) {
+			ext_owner_remove_index(ctx, i);
+		} else {
+			i++;
+		}
+	}
+}
+
+void zf_ext_foreach_root(zf_ctx *ctx, zf_ext_root_cb cb, void *user)
+{
+	zf_addr i;
+	if(ctx == NULL || cb == NULL) return;
+	for(i = 0; i < DSP(ctx); ++i) {
+		if(zf_cell_is_ext(ctx->dstack[i])) cb(ctx, ctx->dstack[i], user);
+	}
+	for(i = 0; i < RSP(ctx); ++i) {
+		if(zf_cell_is_ext(ctx->rstack[i])) cb(ctx, ctx->rstack[i], user);
+	}
+	for(i = 0; i < ctx->ext_owner_count; ++i) {
+		cb(ctx, ctx->ext_owners[i].cell, user);
+	}
+}
+#else
+#define ext_owner_remove_range(ctx, addr, len) ((void)0)
+#define ext_owner_remove_addr(ctx, addr) ((void)0)
+#define ext_owner_put(ctx, addr, cell) ((void)0)
+#define ext_owner_prune_from(ctx, here) ((void)0)
+#endif
+
 static void checkpoint_save(zf_ctx *ctx, zf_addr addr)
 {
 	zf_checkpoint cp;
@@ -113,6 +264,7 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	dict_get_bytes(ctx, addr, &cp, sizeof(cp));
 	CHECK(ctx, dict_has_range(ctx, cp.here, 0), ZF_ABORT_OUTSIDE_MEM);
 	CHECK(ctx, cp.latest <= cp.here, ZF_ABORT_INTERNAL_ERROR);
+	ext_owner_prune_from(ctx, cp.here);
 	HERE(ctx) = cp.here;
 	LATEST(ctx) = cp.latest;
 	ctx->input_state = ZF_INPUT_INTERPRET;
@@ -332,6 +484,7 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 	#else
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	#endif
+	ext_owner_remove_range(ctx, addr, len);
 	while(i--) ctx->dict[addr++] = *p++;
 	return len;
 }
@@ -368,6 +521,27 @@ static zf_addr dict_put_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell v, zf_mem_
 	uint8_t t[2];
 
 	trace(ctx, "\n+" ZF_ADDR_FMT " " ZF_ADDR_FMT, addr, (zf_addr)v);
+
+	#if ZFORTH_EXT_OS_OBJECTS
+	if(zf_cell_is_ext(v)) {
+		if(size != ZF_MEM_SIZE_VAR && size != ZF_MEM_SIZE_VAR_MAX && size != ZF_MEM_SIZE_CELL) {
+			zf_abort(ctx, ZF_ABORT_INVALID_CELL);
+		}
+		if(size == ZF_MEM_SIZE_VAR || size == ZF_MEM_SIZE_VAR_MAX) {
+			trace(ctx, " ⁵");
+			t[0] = 0xff;
+			dict_put_bytes(ctx, addr+0, t, 1);
+			dict_put_bytes(ctx, addr+1, &v, sizeof(v));
+			ext_owner_put(ctx, addr, v);
+			return 1 + sizeof(v);
+		}
+		dict_put_bytes(ctx, addr, &v, sizeof(v));
+		ext_owner_put(ctx, addr, v);
+		return sizeof(v);
+	}
+	#endif
+
+	ext_owner_remove_addr(ctx, addr);
 
 	if(size == ZF_MEM_SIZE_VAR) {
 		if(v >= 0 && v < 16384) {
@@ -661,7 +835,8 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_LTZ:
 			/* Push true if less than zero, else false */
-			zf_push(ctx, zf_pop(ctx) < 0 ? ZF_TRUE : ZF_FALSE);
+			d1 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, d1 < 0 ? ZF_TRUE : ZF_FALSE);
 			break;
 
 		case PRIM_SEMICOL:
@@ -700,23 +875,23 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		
 		case PRIM_LEN:
 			/* Get length of cell; consumes size encoding and address */
-			size = zf_pop(ctx);
-			addr = zf_pop(ctx);
+			size = (zf_mem_size)zf_num_to_addr(ctx, zf_pop(ctx));
+			addr = zf_num_to_addr(ctx, zf_pop(ctx));
 			zf_push(ctx, peek(ctx, addr, &d1, size));
 			break;
 
 		case PRIM_PEEK:
 			/* Peek at memory; consumes size encoding and address */
-			size = zf_pop(ctx);
-			addr = zf_pop(ctx);
+			size = (zf_mem_size)zf_num_to_addr(ctx, zf_pop(ctx));
+			addr = zf_num_to_addr(ctx, zf_pop(ctx));
 			peek(ctx, addr, &d1, size);
 			zf_push(ctx, d1);
 			break;
 
 		case PRIM_POKE:
 			/* Poke memory; consumes size encoding, address, and value */
-			size = zf_pop(ctx);
-			addr = zf_pop(ctx);
+			size = (zf_mem_size)zf_num_to_addr(ctx, zf_pop(ctx));
+			addr = zf_num_to_addr(ctx, zf_pop(ctx));
 			d1 = zf_pop(ctx);
 			if(addr < ZF_USERVAR_COUNT) {
 				USERVAR(ctx)[addr] = d1;
@@ -750,13 +925,13 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_ADD:
 			/* Pop and add top two elements on stack */
-			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
 			zf_push(ctx, d1 + d2);
 			break;
 
 		case PRIM_SYS:
 			/* Perform host system call */
-			d1 = zf_pop(ctx);
+			d1 = zf_require_num(ctx, zf_pop(ctx));
 			ctx->input_state = zf_host_sys(ctx, (zf_syscall_id)d1, input);
 			if(ctx->input_state != ZF_INPUT_INTERPRET) {
 				zf_push(ctx, d1); /* re-push id to resume */
@@ -765,42 +940,45 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_PICK:
 			/* Pick n-th element from stack */
-			addr = zf_pop(ctx);
+			addr = zf_num_to_addr(ctx, zf_pop(ctx));
 			zf_push(ctx, zf_pick(ctx, addr));
 			break;
 		
 		case PRIM_PICKR:
 			/* Pick n-th element from return stack */
-			addr = zf_pop(ctx);
+			addr = zf_num_to_addr(ctx, zf_pop(ctx));
 			zf_push(ctx, zf_pickr(ctx, addr));
 			break;
 
 		case PRIM_SUB:
 			/* Subtract top element on stack from next element */
-			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
 			zf_push(ctx, d2 - d1);
 			break;
 
 		case PRIM_MUL:
 			/* Multiply top two elements on stack */
-			zf_push(ctx, zf_pop(ctx) * zf_pop(ctx));
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, d1 * d2);
 			break;
 
 		case PRIM_DIV:
 			/* Divide next element on stack by top element */
-			if((d2 = zf_pop(ctx)) == 0) {
+			d2 = zf_require_num(ctx, zf_pop(ctx));
+			if(d2 == 0) {
 				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
 			}
-			d1 = zf_pop(ctx);
+			d1 = zf_require_num(ctx, zf_pop(ctx));
 			zf_push(ctx, d1 / d2);
 			break;
 
 		case PRIM_MOD:
 			/* Modulo next element on stack by top element */
-			if((int)(d2 = zf_pop(ctx)) == 0) {
+			d2 = zf_require_num(ctx, zf_pop(ctx));
+			if((int)d2 == 0) {
 				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
 			}
-			d1 = zf_pop(ctx);
+			d1 = zf_require_num(ctx, zf_pop(ctx));
 			zf_push(ctx, (int)d1 % (int)d2);
 			break;
 
@@ -819,7 +997,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		case PRIM_JMP0:
 			/* Jump to address if top of stack is zero */
 			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
-			if(zf_pop(ctx) == 0) {
+			if(zf_require_num(ctx, zf_pop(ctx)) == 0) {
 				trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, (zf_addr)d1);
 				ctx->ip = d1;
 			}
@@ -844,7 +1022,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_COMMA:
 			/* Compile literal value; consumes size encoding, value */
-			size = zf_pop(ctx);
+			size = (zf_mem_size)zf_num_to_addr(ctx, zf_pop(ctx));
 			d1 = zf_pop(ctx);
 			dict_add_cell_typed(ctx, d1, size);
 			break;
@@ -868,7 +1046,8 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_EQUAL:
 			/* Push true if top two elements on stack are equal, else false */
-			zf_push(ctx, zf_pop(ctx) == zf_pop(ctx) ? ZF_TRUE : ZF_FALSE);
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, zf_cell_equal(d1, d2) ? ZF_TRUE : ZF_FALSE);
 			break;
 
 		case PRIM_KEY:
@@ -890,29 +1069,32 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		
 		case PRIM_AND:
 			/* Bitwise AND of top two elements on stack */
-			zf_push(ctx, (zf_int)zf_pop(ctx) & (zf_int)zf_pop(ctx));
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, (zf_int)d1 & (zf_int)d2);
 			break;
 
 		case PRIM_OR:
 			/* Bitwise OR of top two elements on stack */
-			zf_push(ctx, (zf_int)zf_pop(ctx) | (zf_int)zf_pop(ctx));
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, (zf_int)d1 | (zf_int)d2);
 			break;
 
 		case PRIM_XOR:
 			/* Bitwise XOR of top two elements on stack */
-			zf_push(ctx, (zf_int)zf_pop(ctx) ^ (zf_int)zf_pop(ctx));
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, (zf_int)d1 ^ (zf_int)d2);
 			break;
 
 		case PRIM_SHL:
 			/* Shift left of next element by top element */
-			d1 = zf_pop(ctx);
-			zf_push(ctx, (zf_int)zf_pop(ctx) << (zf_int)d1);
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, (zf_int)d2 << (zf_int)d1);
 			break;
 
 		case PRIM_SHR:
 			/* Shift right of next element by top element */
-			d1 = zf_pop(ctx);
-			zf_push(ctx, (zf_int)zf_pop(ctx) >> (zf_int)d1);
+			d1 = zf_require_num(ctx, zf_pop(ctx)); d2 = zf_require_num(ctx, zf_pop(ctx));
+			zf_push(ctx, (zf_int)d2 >> (zf_int)d1);
 			break;
 
 		default:
@@ -1025,6 +1207,9 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	ctx->abort_jmp_valid = 0;
 	ctx->abort_reason = ZF_OK;
 	ctx->read_len = 0;
+	#if ZFORTH_EXT_OS_OBJECTS
+	ctx->ext_owner_count = 0;
+	#endif
 
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ctx->dict = (uint8_t *)malloc(ZF_DICT_SIZE);
@@ -1219,6 +1404,9 @@ zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
 	#endif
 
 	memcpy(ctx->dict, buf, len);
+	#if ZFORTH_EXT_OS_OBJECTS
+	ctx->ext_owner_count = 0;
+	#endif
 	TRACE(ctx) = trace;
 	COMPILING(ctx) = 0;
 	POSTPONE(ctx) = 0;

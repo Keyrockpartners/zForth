@@ -14,6 +14,16 @@
 #define ZF_ENABLE_DYNAMIC_DICT 1
 #endif
 
+/* Set to 1 to enable opaque host/OS object cells. Disabled by default so
+ * numeric-only builds do not require host object hooks or extra storage. */
+#ifndef ZFORTH_EXT_OS_OBJECTS
+#define ZFORTH_EXT_OS_OBJECTS 0
+#endif
+
+#ifndef ZF_EXT_DICT_OWNERS_MAX
+#define ZF_EXT_DICT_OWNERS_MAX 32
+#endif
+
 
 /* Set to 1 to add boundary checks to stack operations. Increases .text size
  * by approx 100 bytes */
