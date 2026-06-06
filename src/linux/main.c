@@ -15,6 +15,9 @@
 
 #include "zforth.h"
 
+#if ZF_LINUX_ROM_DICT
+#include "zforth_dict.h"
+#endif
 
 
 /*
@@ -82,7 +85,12 @@ static void save(zf_ctx *ctx, const char *fname)
 {
 	size_t len = zf_dict_size(ctx);
 	void *p = zf_dump(ctx, NULL);
-	FILE *f = fopen(fname, "wb");
+	FILE *f;
+	if(p == NULL) {
+		fprintf(stderr, "dictionary dump unavailable for mounted ROM dictionary\n");
+		return;
+	}
+	f = fopen(fname, "wb");
 	if(f) {
 		fwrite(p, 1, len, f);
 		fclose(f);
@@ -223,6 +231,10 @@ static void emit_header(zf_ctx *ctx, const char *name)
 	const unsigned char *dict = (const unsigned char *)zf_dump(ctx, NULL);
 	size_t len = zf_dict_size(ctx);
 	size_t i;
+	if(dict == NULL) {
+		fprintf(stderr, "dictionary dump unavailable for mounted ROM dictionary\n");
+		return;
+	}
 
 	make_symbol_name(name, symbol, sizeof(symbol));
 	make_include_guard(symbol, guard, sizeof(guard));
@@ -252,7 +264,8 @@ static void emit_header(zf_ctx *ctx, const char *name)
 	}
 
 	printf("};\n");
-	printf("static const size_t %s_len = sizeof(%s);\n\n", symbol, symbol);
+	printf("static const size_t %s_len = sizeof(%s);\n", symbol, symbol);
+	printf("static const size_t %s_data_len = %zu;\n\n", symbol, zf_dict_data_size(ctx));
 	printf("#endif\n");
 }
 
@@ -265,7 +278,7 @@ static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
 	if(!(addr >= 0) || !(len >= 0) || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
-	return (const uint8_t *)zf_dump(ctx, NULL) + (size_t)addr;
+	return (const uint8_t *)zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
 }
 
 static void fmt_syscall(zf_ctx *ctx)
@@ -364,8 +377,8 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 			if(addr < 0 || len < 0 || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
 				zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 			}
-			void *buf = (uint8_t *)zf_dump(ctx, NULL) + (int)addr;
-			(void)fwrite(buf, 1, len, stdout);
+			const void *buf = zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
+			(void)fwrite(buf, 1, (size_t)len, stdout);
 			fflush(stdout); }
 			break;
 
@@ -516,7 +529,21 @@ int main(int argc, char **argv)
 	if(fname_load) {
 		load(ctx, fname_load);
 	} else {
+#if ZF_LINUX_ROM_DICT
+		zf_result rv = zf_dict_mount_rom(ctx, zforth_dict, zforth_dict_len, zforth_dict_data_len);
+		if(rv != ZF_OK) {
+			fprintf(stderr, "error mounting built-in ROM dictionary\n");
+			zf_free(ctx);
+			free(ctx);
+			return 1;
+		}
+#else
 		zf_bootstrap(ctx);
+#endif
+	}
+
+	if(header_name) {
+		zf_dict_set_data_compile(ctx, 1);
 	}
 
 

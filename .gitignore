@@ -4,6 +4,7 @@ go
 *.swp
 *.swo
 zforth
+zforth-rom
 zforth.save
 .zforth.hist
 openspec

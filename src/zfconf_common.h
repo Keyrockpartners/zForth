@@ -14,6 +14,13 @@
 #define ZF_ENABLE_DYNAMIC_DICT 1
 #endif
 
+/* Set to 1 to allow mounting a read-only base dictionary and appending new
+ * definitions to a writable RAM tail. This is useful when a generated
+ * zforth_dict.h can live in memory-mapped flash/ROM. */
+#ifndef ZF_ENABLE_ROM_DICT
+#define ZF_ENABLE_ROM_DICT 0
+#endif
+
 /* Set to 1 to enable opaque host/OS object cells. Disabled by default so
  * numeric-only builds do not require host object hooks or extra storage. */
 #ifndef ZFORTH_EXT_OS_OBJECTS

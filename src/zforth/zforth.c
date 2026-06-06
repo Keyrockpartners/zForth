@@ -118,10 +118,12 @@ typedef enum {
 	PRIM_JMP,     PRIM_JMP0,      PRIM_TICK, PRIM_COMMENT, PRIM_PUSHR,    PRIM_POPR,
 	PRIM_EQUAL,   PRIM_SYS,       PRIM_PICK, PRIM_COMMA,   PRIM_KEY,      PRIM_LITS,
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
-	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE,
+	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
+	PRIM_DATA_TO_ADDR,
 	PRIM_COUNT
 } zf_prim;
 
+#if ZF_ENABLE_BOOTSTRAP
 static const char prim_names[] =
 	_("exit")    _("lit")        _("<0")    _(":")     _("_;")        _("+")
 	_("-")       _("*")          _("/")     _("%")     _("drop")      _("dup")
@@ -129,7 +131,9 @@ static const char prim_names[] =
 	_("jmp")     _("jmp0")       _("'")     _("_(")    _(">r")        _("r>")
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
-	_("_literal") _("chkpt!") _("chkpt-restore");
+	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
+	_("data>addr");
+#endif
 
 typedef struct {
 	zf_addr here;
@@ -142,7 +146,11 @@ typedef struct {
  * C they are stored in an array of zf_addr with friendly reference names
  * through some macros */
 
+#if ZF_ENABLE_ROM_DICT
+#define USERVAR(ctx)   ((ctx)->uservars)
+#else
 #define USERVAR(ctx)   ((zf_addr *)(ctx)->dict)
+#endif
 #define HERE(ctx)      USERVAR(ctx)[ZF_USERVAR_HERE]      /* compilation pointer in dictionary */
 #define LATEST(ctx)    USERVAR(ctx)[ZF_USERVAR_LATEST]    /* pointer to last compiled word */
 #define TRACE(ctx)     USERVAR(ctx)[ZF_USERVAR_TRACE]     /* trace enable flag */
@@ -151,9 +159,22 @@ typedef struct {
 #define DSP(ctx)       USERVAR(ctx)[ZF_USERVAR_DSP]       /* data stack pointer */
 #define RSP(ctx)       USERVAR(ctx)[ZF_USERVAR_RSP]       /* return stack pointer */
 
+static zf_addr dict_base(const zf_ctx *ctx)
+{
+#if ZF_ENABLE_ROM_DICT
+	return ctx->dict_base;
+#else
+	(void)ctx;
+	return 0;
+#endif
+}
+#define DICT_BASE(ctx) dict_base(ctx)
+
+#if ZF_ENABLE_BOOTSTRAP
 static const char uservar_names[] =
 	_("h")   _("latest") _("trace")  _("compiling")  _("_postpone")  _("dsp")
 	_("rsp");
+#endif
 
 
 
@@ -164,6 +185,8 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len);
+static void uservars_from_image(zf_ctx *ctx, const void *buf);
+static void uservars_to_image(zf_ctx *ctx);
 
 #if ZFORTH_EXT_OS_OBJECTS
 static int ext_owner_find(zf_ctx *ctx, zf_addr addr)
@@ -276,7 +299,7 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	RSP(ctx) = 0;
 }
 
-static size_t dict_capacity(const zf_ctx *ctx)
+static size_t dict_writable_capacity(const zf_ctx *ctx)
 {
 	#if ZF_ENABLE_DYNAMIC_DICT
 	return ctx->dict_cap;
@@ -286,26 +309,100 @@ static size_t dict_capacity(const zf_ctx *ctx)
 	#endif
 }
 
+static size_t dict_capacity(const zf_ctx *ctx)
+{
+	return (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx);
+}
+
+static int range_end(zf_addr addr, size_t len, size_t *end)
+{
+	size_t start = (size_t)addr;
+	if(start > (size_t)-1 - len) {
+		return 0;
+	}
+	*end = start + len;
+	return 1;
+}
+
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
-	size_t cap = dict_capacity(ctx);
+	size_t end;
 
-	if(start > cap) {
+	if(!range_end(addr, len, &end)) {
 		return 0;
 	}
 
-	return len <= cap - start;
+#if ZF_ENABLE_ROM_DICT
+	if(ctx->rom_dict != NULL) {
+		if(start < (size_t)ctx->rom_len) {
+			if(end <= (size_t)ctx->rom_len) return 1;
+			return (size_t)ctx->dict_base == (size_t)ctx->rom_len &&
+			       end <= (size_t)ctx->dict_base + dict_writable_capacity(ctx);
+		}
+		if(start < (size_t)ctx->dict_base) return 0;
+		return end <= (size_t)ctx->dict_base + dict_writable_capacity(ctx);
+	}
+#endif
+
+	if(start < (size_t)DICT_BASE(ctx)) {
+		return 0;
+	}
+	return end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx);
+}
+
+static int dict_has_writable_range(const zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end;
+
+	if(!range_end(addr, len, &end)) {
+		return 0;
+	}
+	if(start < (size_t)DICT_BASE(ctx)) {
+		return 0;
+	}
+	return end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx);
+}
+
+static size_t dict_writable_offset(zf_ctx *ctx, zf_addr addr)
+{
+	if((size_t)addr < (size_t)DICT_BASE(ctx)) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+	return (size_t)addr - (size_t)DICT_BASE(ctx);
+}
+
+static void uservars_from_image(zf_ctx *ctx, const void *buf)
+{
+#if ZF_ENABLE_ROM_DICT
+	memcpy(ctx->uservars, buf, ZF_USERVAR_COUNT * sizeof(zf_addr));
+#else
+	(void)ctx;
+	(void)buf;
+#endif
+}
+
+static void uservars_to_image(zf_ctx *ctx)
+{
+#if ZF_ENABLE_ROM_DICT
+	if(DICT_BASE(ctx) == 0 && dict_writable_capacity(ctx) >= ZF_USERVAR_COUNT * sizeof(zf_addr)) {
+		memcpy(ctx->dict, ctx->uservars, ZF_USERVAR_COUNT * sizeof(zf_addr));
+	}
+#else
+	(void)ctx;
+#endif
 }
 
 #if ZF_ENABLE_DYNAMIC_DICT
 static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
 {
-	size_t start = (size_t)addr;
+	size_t start;
 	size_t needed;
 	size_t new_cap;
 	uint8_t *new_dict;
 
+	start = dict_writable_offset(ctx, addr);
 	if(start > (size_t)-1 - len) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
@@ -479,13 +576,14 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 {
 	const uint8_t *p = (const uint8_t *)buf;
 	size_t i = len;
+	size_t off;
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ensure_dict_capacity(ctx, addr, len);
-	#else
-	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	#endif
+	CHECK(ctx, dict_has_writable_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	ext_owner_remove_range(ctx, addr, len);
-	while(i--) ctx->dict[addr++] = *p++;
+	off = dict_writable_offset(ctx, addr);
+	while(i--) ctx->dict[off++] = *p++;
 	return len;
 }
 
@@ -494,7 +592,40 @@ static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
-	while(len--) *p++ = ctx->dict[addr++];
+	while(len--) {
+#if ZF_ENABLE_ROM_DICT
+		if(ctx->rom_dict != NULL && addr < ctx->rom_len) {
+			*p++ = ctx->rom_dict[addr++];
+			continue;
+		}
+#endif
+		*p++ = ctx->dict[dict_writable_offset(ctx, addr++)];
+	}
+}
+
+const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end;
+	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	if(!range_end(addr, len, &end)) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+#if ZF_ENABLE_ROM_DICT
+	if(ctx->rom_dict != NULL && start < (size_t)ctx->rom_len && end <= (size_t)ctx->rom_len) {
+		return ctx->rom_dict + start;
+	}
+#endif
+	if(start >= (size_t)DICT_BASE(ctx) && end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx)) {
+		return ctx->dict + (start - (size_t)DICT_BASE(ctx));
+	}
+	zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	return NULL;
+}
+
+void zf_dict_write_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len)
+{
+	dict_put_bytes(ctx, addr, buf, len);
 }
 
 
@@ -710,8 +841,8 @@ static int find_word(zf_ctx *ctx, const char *name, zf_addr *word, zf_addr *code
 		p += dict_get_cell(ctx, p, &link);
 		len = ZF_FLAG_LEN((int)d);
 		if(len == namelen) {
-			const char *name2 = (const char *)&ctx->dict[p];
-			if(memcmp(name, name2, len) == 0) {
+			dict_get_bytes(ctx, p, ctx->name_buf, len);
+			if(memcmp(name, ctx->name_buf, len) == 0) {
 				*word = w;
 				*code = p + len;
 				return 1;
@@ -808,6 +939,20 @@ static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 
 }
 
+static void allot_addr(zf_ctx *ctx, zf_addr *addr, zf_cell delta)
+{
+	delta = zf_require_num(ctx, delta);
+	if(delta < 0) {
+		zf_addr n = (zf_addr)(-delta);
+		CHECK(ctx, *addr >= n, ZF_ABORT_OUTSIDE_MEM);
+		*addr -= n;
+	} else {
+		zf_addr n = (zf_addr)delta;
+		CHECK(ctx, *addr <= (zf_addr)-1 - n, ZF_ABORT_OUTSIDE_MEM);
+		*addr += n;
+	}
+}
+
 
 /*
  * Run primitive opcode
@@ -860,6 +1005,28 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_RESTORE:
 			checkpoint_restore(ctx, zf_pop(ctx));
+			break;
+
+		case PRIM_DATA_HERE:
+			zf_push(ctx, ctx->data_compile ? ctx->data_here : HERE(ctx));
+			break;
+
+		case PRIM_DATA_ALLOT:
+			d1 = zf_pop(ctx);
+			if(ctx->data_compile) {
+				allot_addr(ctx, &ctx->data_here, d1);
+			} else {
+				allot_addr(ctx, &HERE(ctx), d1);
+			}
+			break;
+
+		case PRIM_DATA_TO_ADDR:
+			d1 = zf_require_num(ctx, zf_pop(ctx));
+			if(d1 >= 0 && d1 < (zf_cell)ctx->data_len) {
+				zf_push(ctx, (zf_cell)(ctx->data_base + (zf_addr)d1));
+			} else {
+				zf_push(ctx, d1);
+			}
 			break;
 
 		case PRIM_LIT:
@@ -1207,6 +1374,15 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	ctx->abort_jmp_valid = 0;
 	ctx->abort_reason = ZF_OK;
 	ctx->read_len = 0;
+	ctx->data_base = 0;
+	ctx->data_len = 0;
+	ctx->data_here = 0;
+	ctx->data_compile = 0;
+#if ZF_ENABLE_ROM_DICT
+	ctx->rom_dict = NULL;
+	ctx->rom_len = 0;
+	ctx->dict_base = 0;
+#endif
 	#if ZFORTH_EXT_OS_OBJECTS
 	ctx->ext_owner_count = 0;
 	#endif
@@ -1230,6 +1406,7 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+	uservars_to_image(ctx);
 
 	return ZF_OK;
 }
@@ -1362,8 +1539,31 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 
 void *zf_dump(zf_ctx *ctx, size_t *len)
 {
+	if(ctx == NULL) {
+		if(len) *len = 0;
+		return NULL;
+	}
+	if(DICT_BASE(ctx) != 0) {
+		if(len) *len = 0;
+		return NULL;
+	}
+	uservars_to_image(ctx);
 	if(len) *len = dict_capacity(ctx);
 	return ctx->dict;
+}
+
+void zf_dict_set_data_compile(zf_ctx *ctx, int enable)
+{
+	if(ctx != NULL) {
+		ctx->data_compile = enable ? 1 : 0;
+		if(enable) ctx->data_here = 0;
+	}
+}
+
+size_t zf_dict_data_size(zf_ctx *ctx)
+{
+	if(ctx == NULL) return 0;
+	return (size_t)(ctx->data_compile ? ctx->data_here : ctx->data_len);
 }
 
 size_t zf_dict_size(zf_ctx *ctx)
@@ -1376,10 +1576,8 @@ size_t zf_dict_capacity(zf_ctx *ctx)
 	return dict_capacity(ctx);
 }
 
-zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
+static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, zf_addr trace)
 {
-	zf_addr trace;
-
 	#if ZF_ENABLE_DYNAMIC_DICT
 	if(ctx == NULL || ctx->dict == NULL) {
 		return ZF_ABORT_OUTSIDE_MEM;
@@ -1393,17 +1591,26 @@ zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
 
-	trace = TRACE(ctx);
+#if ZF_ENABLE_ROM_DICT
+	ctx->rom_dict = NULL;
+	ctx->rom_len = 0;
+	ctx->dict_base = 0;
+#endif
+	ctx->data_base = 0;
+	ctx->data_len = 0;
+	ctx->data_here = 0;
+	ctx->data_compile = 0;
 
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ensure_dict_capacity(ctx, 0, len);
 	#else
-	if(!dict_has_range(ctx, 0, len)) {
+	if(len > dict_writable_capacity(ctx)) {
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
 	#endif
 
 	memcpy(ctx->dict, buf, len);
+	uservars_from_image(ctx, buf);
 	#if ZFORTH_EXT_OS_OBJECTS
 	ctx->ext_owner_count = 0;
 	#endif
@@ -1418,6 +1625,99 @@ zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
 	}
 
 	return ZF_OK;
+}
+
+zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len)
+{
+	zf_addr trace;
+	if(ctx == NULL) return ZF_ABORT_INTERNAL_ERROR;
+	trace = TRACE(ctx);
+	return dict_import_prepare(ctx, buf, len, trace);
+}
+
+zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, size_t data_len)
+{
+	zf_result r;
+	zf_addr trace;
+	zf_addr data_base;
+
+	if(ctx == NULL) return ZF_ABORT_INTERNAL_ERROR;
+	trace = TRACE(ctx);
+	r = dict_import_prepare(ctx, buf, len, trace);
+	if(r != ZF_OK) return r;
+	if(data_len > (size_t)((zf_addr)-1)) return ZF_ABORT_OUTSIDE_MEM;
+
+	data_base = HERE(ctx);
+	if(data_base > (zf_addr)-1 - (zf_addr)data_len) return ZF_ABORT_OUTSIDE_MEM;
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ensure_dict_capacity(ctx, data_base, data_len);
+	#else
+	if(!dict_has_writable_range(ctx, data_base, data_len)) return ZF_ABORT_OUTSIDE_MEM;
+	#endif
+	memset(ctx->dict + ((size_t)data_base - (size_t)DICT_BASE(ctx)), 0, data_len);
+	ctx->data_base = data_base;
+	ctx->data_len = (zf_addr)data_len;
+	HERE(ctx) = data_base + (zf_addr)data_len;
+	uservars_to_image(ctx);
+	return ZF_OK;
+}
+
+zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t data_len)
+{
+#if ZF_ENABLE_ROM_DICT
+	zf_addr trace;
+
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(ctx == NULL || ctx->dict == NULL) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#else
+	if(ctx == NULL) {
+		return ZF_ABORT_INTERNAL_ERROR;
+	}
+	#endif
+	if(buf == NULL || len < ZF_USERVAR_COUNT * sizeof(zf_addr) ||
+	   len > (size_t)((zf_addr)-1) || data_len > (size_t)((zf_addr)-1) ||
+	   (zf_addr)len > (zf_addr)-1 - (zf_addr)data_len) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+
+	trace = TRACE(ctx);
+	ctx->rom_dict = (const uint8_t *)buf;
+	ctx->rom_len = (zf_addr)len;
+	ctx->dict_base = (zf_addr)len;
+	ctx->data_base = (zf_addr)len;
+	ctx->data_len = (zf_addr)data_len;
+	ctx->data_here = 0;
+	ctx->data_compile = 0;
+
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ensure_dict_capacity(ctx, (zf_addr)len, data_len);
+	#else
+	if(data_len > dict_writable_capacity(ctx)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#endif
+	memset(ctx->dict, 0, dict_writable_capacity(ctx));
+	uservars_from_image(ctx, buf);
+	#if ZFORTH_EXT_OS_OBJECTS
+	ctx->ext_owner_count = 0;
+	#endif
+	TRACE(ctx) = trace;
+	COMPILING(ctx) = 0;
+	POSTPONE(ctx) = 0;
+	DSP(ctx) = 0;
+	RSP(ctx) = 0;
+	HERE(ctx) = (zf_addr)(len + data_len);
+
+	if((size_t)HERE(ctx) > dict_capacity(ctx)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+
+	return ZF_OK;
+#else
+	return zf_dict_import_with_data(ctx, buf, len, data_len);
+#endif
 }
 
 zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v)

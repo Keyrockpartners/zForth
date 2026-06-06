@@ -17,6 +17,10 @@ extern "C"
 #define ZF_ENABLE_DYNAMIC_DICT 0
 #endif
 
+#ifndef ZF_ENABLE_ROM_DICT
+#define ZF_ENABLE_ROM_DICT 0
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -99,6 +103,18 @@ typedef struct zf_ctx {
 	#else
 	uint8_t dict[ZF_DICT_SIZE];
 	#endif
+#if ZF_ENABLE_ROM_DICT
+	zf_addr uservars[ZF_USERVAR_COUNT];
+#endif
+	zf_addr data_base;
+	zf_addr data_len;
+	zf_addr data_here;
+	uint8_t data_compile;
+#if ZF_ENABLE_ROM_DICT
+	const uint8_t *rom_dict;
+	zf_addr rom_len;
+	zf_addr dict_base;
+#endif
 
 	/* State and stack and interpreter pointers */
 	zf_input_state input_state;
@@ -136,9 +152,15 @@ void zf_init(zf_ctx *ctx, int trace);
 void zf_free(zf_ctx *ctx);
 void zf_bootstrap(zf_ctx *ctx);
 void *zf_dump(zf_ctx *ctx, size_t *len);
+const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len);
+void zf_dict_write_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len);
+void zf_dict_set_data_compile(zf_ctx *ctx, int enable);
+size_t zf_dict_data_size(zf_ctx *ctx);
 size_t zf_dict_size(zf_ctx *ctx);
 size_t zf_dict_capacity(zf_ctx *ctx);
 zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len);
+zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);
+zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);
 zf_result zf_eval(zf_ctx *ctx, const char *buf);
 void zf_abort(zf_ctx *ctx, zf_result reason);
 
