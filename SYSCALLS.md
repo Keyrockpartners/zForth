@@ -14,6 +14,10 @@ These are defined by `zf_syscall_id` in `src/zforth/zforth.h` and are used by th
 
 Syscalls that take an `( addr len )` pair must resolve it with `zf_dict_addr(ctx, addr, len)`, never by indexing `ctx->dict` directly. `zf_dict_addr()` checks the range (aborting on failure) and handles all three regions an address can fall in: the read-only ROM image, the writable RAM dictionary, and the data window at `ZF_DATA_ADDR` where variables compiled into a prebuilt dictionary live.
 
+The pointer from `zf_dict_addr()` is only valid until the dictionary is next written. The dictionary can grow and move on any write, including `zf_dict_write_bytes()`, `zf_eval()`, and the dictionary copy done by `<-os_str`. Copy the bytes out, or call `zf_dict_addr()` again after writing, rather than holding the pointer.
+
+Device builds should call `zf_init_checked()` (not `zf_init()`) and check the result of `zf_dict_mount_rom()`. Both return `ZF_ABORT_OUTSIDE_MEM` on allocation failure instead of aborting. The writable dictionary is capped at `ZF_DICT_MAX_SIZE` bytes (default 32 KB, not counting a mounted ROM image), which can be changed at runtime with `zf_dict_set_limit()`. A script that hits the cap aborts with `outside memory`; the rest of the firmware's heap is unaffected.
+
 ## Prebuilt dictionaries
 
 `zforth -H NAME file.zf...` emits `NAME[]`, `NAME_len`, and `NAME_data_len`. The array is the dictionary image followed by the initial contents of the data window (its last `NAME_data_len` bytes). Pass all three unchanged to `zf_dict_mount_rom()` (ROM builds) or `zf_dict_import_with_data()`.

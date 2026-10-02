@@ -25,6 +25,18 @@ extern "C"
 #define ZF_DATA_ADDR 0x40000000u
 #endif
 
+#ifndef ZF_DICT_INITIAL_SIZE
+#define ZF_DICT_INITIAL_SIZE ZF_DICT_SIZE
+#endif
+
+#ifndef ZF_DICT_GROW_SIZE
+#define ZF_DICT_GROW_SIZE ZF_DICT_SIZE
+#endif
+
+#ifndef ZF_DICT_MAX_SIZE
+#define ZF_DICT_MAX_SIZE 0
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -104,6 +116,7 @@ typedef struct zf_ctx {
 	#if ZF_ENABLE_DYNAMIC_DICT
 	uint8_t *dict;
 	size_t dict_cap;
+	size_t dict_max;
 	#else
 	uint8_t dict[ZF_DICT_SIZE];
 	#endif
@@ -158,8 +171,14 @@ typedef struct zf_ctx {
 zf_result zf_init_checked(zf_ctx *ctx, int trace);
 void zf_init(zf_ctx *ctx, int trace);
 void zf_free(zf_ctx *ctx);
+zf_result zf_dict_set_limit(zf_ctx *ctx, size_t max);
 void zf_bootstrap(zf_ctx *ctx);
 void *zf_dump(zf_ctx *ctx, size_t *len);
+/* Returns a pointer to len bytes of dictionary memory at addr, aborting if the
+ * range is invalid. The pointer is only valid until the dictionary is next
+ * written or evaluated (zf_eval(), zf_dict_write_bytes(), a dictionary import,
+ * ...): with a dynamic dictionary any write may grow and move it. Copy the
+ * bytes out, or call zf_dict_addr() again, instead of holding the pointer. */
 const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len);
 void zf_dict_write_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len);
 void zf_dict_set_data_compile(zf_ctx *ctx, int enable);

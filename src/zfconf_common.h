@@ -10,9 +10,42 @@
 #define ZF_ENABLE_TRACE 0
 #endif
 
+/* Set to 1 to allocate the writable dictionary from the heap and grow it on
+ * demand, 0 for a fixed ZF_DICT_SIZE array inside zf_ctx. */
 #ifndef ZF_ENABLE_DYNAMIC_DICT
 #define ZF_ENABLE_DYNAMIC_DICT 1
 #endif
+
+/* Dynamic dictionary sizing, in bytes. These count only the writable RAM part
+ * of the dictionary: with a mounted ROM image that is the data window plus
+ * anything defined at runtime, not the image itself (an image loaded with
+ * zf_dict_import_with_data() on a build without ROM support is in RAM, and
+ * counts). Growth past ZF_DICT_MAX_SIZE aborts the running code with
+ * ZF_ABORT_OUTSIDE_MEM instead of exhausting the heap; 0 means no limit. Set
+ * ZF_DICT_INITIAL_SIZE equal to ZF_DICT_MAX_SIZE to allocate once at startup,
+ * before the heap fragments, and never realloc. zf_dict_set_limit() changes
+ * the maximum at runtime. */
+#ifndef ZF_DICT_INITIAL_SIZE
+#define ZF_DICT_INITIAL_SIZE 4096
+#endif
+
+#ifndef ZF_DICT_GROW_SIZE
+#define ZF_DICT_GROW_SIZE 4096
+#endif
+
+#ifndef ZF_DICT_MAX_SIZE
+#define ZF_DICT_MAX_SIZE 32768
+#endif
+
+/* The dynamic dictionary uses ZF_REALLOC(p, n) and ZF_FREE(p), defaulting to
+ * realloc() and free(). ZF_REALLOC(NULL, n) must behave like malloc(n). To
+ * pick the heap on ESP32, e.g. keep the dictionary in internal RAM:
+ *
+ *   #include <esp_heap_caps.h>
+ *   #define ZF_REALLOC(p, n) heap_caps_realloc((p), (n), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+ *   #define ZF_FREE(p) heap_caps_free(p)
+ *
+ * or MALLOC_CAP_SPIRAM to put it in PSRAM. */
 
 /* Set to 1 to allow mounting a read-only base dictionary and appending new
  * definitions to a writable RAM tail. This is useful when a generated
@@ -102,7 +135,8 @@ typedef ZF_ADDR_TYPE zf_addr;
 
 
 /* Memory region sizes: dictionary size is given in bytes, stack sizes are
- * number of elements of type zf_cell */
+ * number of elements of type zf_cell. ZF_DICT_SIZE is the fixed dictionary
+ * size when ZF_ENABLE_DYNAMIC_DICT is 0. */
 #ifndef ZF_DICT_SIZE
 #define ZF_DICT_SIZE 4096
 #endif

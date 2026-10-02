@@ -7,6 +7,16 @@
 #include "zforth.h"
 
 
+/* Allocation hooks for the dynamic dictionary; override in zfconf.h to choose
+ * the heap, e.g. heap_caps_realloc() on ESP32. ZF_REALLOC(NULL, n) must act
+ * as malloc(n). */
+#ifndef ZF_REALLOC
+#define ZF_REALLOC(p, n) realloc((p), (n))
+#endif
+#ifndef ZF_FREE
+#define ZF_FREE(p) free(p)
+#endif
+
 /* Flags and length encoded in words */
 
 #if ZFORTH_EXT_OS_OBJECTS
@@ -441,42 +451,58 @@ static void uservars_to_image(zf_ctx *ctx)
 }
 
 #if ZF_ENABLE_DYNAMIC_DICT
-static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
+/* Grow the writable dictionary to at least 'needed' bytes, mapped at address
+ * 'base'. Returns an error instead of aborting so it is safe to call outside
+ * zf_eval(); on failure the dictionary is left unchanged. */
+static zf_result dict_grow(zf_ctx *ctx, size_t base, size_t needed)
 {
-	size_t start;
-	size_t needed;
 	size_t new_cap;
 	uint8_t *new_dict;
 
-	start = dict_writable_offset(ctx, addr);
-	if(start > (size_t)-1 - len) {
-		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
-	}
-
-	needed = start + len;
 	if(needed <= ctx->dict_cap) {
-		return;
+		return ZF_OK;
 	}
-	if((size_t)DICT_BASE(ctx) + needed > (size_t)ZF_DATA_ADDR) {
-		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	if(base > (size_t)ZF_DATA_ADDR || needed > (size_t)ZF_DATA_ADDR - base) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	if(ctx->dict_max != 0 && needed > ctx->dict_max) {
+		return ZF_ABORT_OUTSIDE_MEM;
 	}
 
 	new_cap = ctx->dict_cap;
 	while(new_cap < needed) {
-		if(new_cap > (size_t)-1 - ZF_DICT_SIZE) {
-			zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		if(new_cap > (size_t)-1 - ZF_DICT_GROW_SIZE) {
+			return ZF_ABORT_OUTSIDE_MEM;
 		}
-		new_cap += ZF_DICT_SIZE;
+		new_cap += ZF_DICT_GROW_SIZE;
+	}
+	if(ctx->dict_max != 0 && new_cap > ctx->dict_max) {
+		new_cap = ctx->dict_max;
 	}
 
-	new_dict = (uint8_t *)realloc(ctx->dict, new_cap);
+	new_dict = (uint8_t *)ZF_REALLOC(ctx->dict, new_cap);
 	if(new_dict == NULL) {
-		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		return ZF_ABORT_OUTSIDE_MEM;
 	}
 
 	memset(new_dict + ctx->dict_cap, 0, new_cap - ctx->dict_cap);
 	ctx->dict = new_dict;
 	ctx->dict_cap = new_cap;
+	return ZF_OK;
+}
+
+static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = dict_writable_offset(ctx, addr);
+	zf_result r;
+
+	if(start > (size_t)-1 - len) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+	r = dict_grow(ctx, (size_t)DICT_BASE(ctx), start + len);
+	if(r != ZF_OK) {
+		zf_abort(ctx, r);
+	}
 }
 #endif
 
@@ -493,10 +519,10 @@ static void data_buf_reserve(zf_ctx *ctx, zf_addr size)
 
 	new_cap = ctx->data_buf_cap;
 	while(new_cap < (size_t)size) {
-		new_cap += ZF_DICT_SIZE;
+		new_cap += ZF_DICT_GROW_SIZE;
 	}
 
-	new_buf = (uint8_t *)realloc(ctx->data_buf, new_cap);
+	new_buf = (uint8_t *)ZF_REALLOC(ctx->data_buf, new_cap);
 	if(new_buf == NULL) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
@@ -1488,8 +1514,12 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ctx->data_buf = NULL;
 	ctx->data_buf_cap = 0;
-	ctx->dict = (uint8_t *)malloc(ZF_DICT_SIZE);
-	ctx->dict_cap = ZF_DICT_SIZE;
+	ctx->dict_max = ZF_DICT_MAX_SIZE;
+	ctx->dict_cap = ZF_DICT_INITIAL_SIZE;
+	if(ctx->dict_max != 0 && ctx->dict_cap > ctx->dict_max) {
+		ctx->dict_cap = ctx->dict_max;
+	}
+	ctx->dict = (uint8_t *)ZF_REALLOC(NULL, ctx->dict_cap);
 	if(ctx->dict == NULL) {
 		ctx->dict_cap = 0;
 		return ZF_ABORT_OUTSIDE_MEM;
@@ -1522,15 +1552,26 @@ void zf_init(zf_ctx *ctx, int enable_trace)
 void zf_free(zf_ctx *ctx)
 {
 	#if ZF_ENABLE_DYNAMIC_DICT
-	free(ctx->dict);
+	ZF_FREE(ctx->dict);
 	ctx->dict = NULL;
 	ctx->dict_cap = 0;
-	free(ctx->data_buf);
+	ZF_FREE(ctx->data_buf);
 	ctx->data_buf = NULL;
 	ctx->data_buf_cap = 0;
 	#else
 	(void)ctx;
 	#endif
+}
+
+zf_result zf_dict_set_limit(zf_ctx *ctx, size_t max)
+{
+	if(ctx == NULL) return ZF_ABORT_INTERNAL_ERROR;
+	#if ZF_ENABLE_DYNAMIC_DICT
+	ctx->dict_max = max;
+	#else
+	(void)max;
+	#endif
+	return ZF_OK;
 }
 
 
@@ -1709,6 +1750,16 @@ static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, z
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
 
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(dict_grow(ctx, 0, len) != ZF_OK) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#else
+	if(len > dict_writable_capacity(ctx)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#endif
+
 #if ZF_ENABLE_ROM_DICT
 	ctx->rom_dict = NULL;
 	ctx->rom_len = 0;
@@ -1718,14 +1769,6 @@ static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, z
 	ctx->data_len = 0;
 	ctx->data_here = 0;
 	ctx->data_compile = 0;
-
-	#if ZF_ENABLE_DYNAMIC_DICT
-	ensure_dict_capacity(ctx, 0, len);
-	#else
-	if(len > dict_writable_capacity(ctx)) {
-		return ZF_ABORT_OUTSIDE_MEM;
-	}
-	#endif
 
 	memcpy(ctx->dict, buf, len);
 	uservars_from_image(ctx, buf);
@@ -1771,7 +1814,7 @@ zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, siz
 	data_base = HERE(ctx);
 	if(data_base > (zf_addr)-1 - (zf_addr)data_len) return ZF_ABORT_OUTSIDE_MEM;
 	#if ZF_ENABLE_DYNAMIC_DICT
-	ensure_dict_capacity(ctx, data_base, data_len);
+	if(dict_grow(ctx, 0, (size_t)data_base + data_len) != ZF_OK) return ZF_ABORT_OUTSIDE_MEM;
 	#else
 	if(!dict_has_writable_range(ctx, data_base, data_len)) return ZF_ABORT_OUTSIDE_MEM;
 	#endif
@@ -1804,6 +1847,16 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	}
 	rom_len = len - data_len;
 
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(dict_grow(ctx, rom_len, data_len) != ZF_OK) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#else
+	if(data_len > dict_writable_capacity(ctx)) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#endif
+
 	trace = TRACE(ctx);
 	ctx->rom_dict = (const uint8_t *)buf;
 	ctx->rom_len = (zf_addr)rom_len;
@@ -1813,13 +1866,6 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	ctx->data_here = 0;
 	ctx->data_compile = 0;
 
-	#if ZF_ENABLE_DYNAMIC_DICT
-	ensure_dict_capacity(ctx, (zf_addr)rom_len, data_len);
-	#else
-	if(data_len > dict_writable_capacity(ctx)) {
-		return ZF_ABORT_OUTSIDE_MEM;
-	}
-	#endif
 	memset(ctx->dict, 0, dict_writable_capacity(ctx));
 	memcpy(ctx->dict, (const uint8_t *)buf + rom_len, data_len);
 	uservars_from_image(ctx, buf);
