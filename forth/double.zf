@@ -21,14 +21,14 @@
 : d>= d< not ;
 : dmin 2over 2over d> if 2swap fi 2drop ;
 : dmax 2over 2over d< if 2swap fi 2drop ;
-: d. s" %D " fmt ;
+: d. s" %ld " fmt ;
 
 : du> 2swap du< ;
 : du<= du> not ;
 : du>= du< not ;
 : dumin 2over 2over du> if 2swap fi 2drop ;
 : dumax 2over 2over du< if 2swap fi 2drop ;
-: ud. s" %U " fmt ;
+: ud. s" %lu " fmt ;
 
 ( Double-cell memory, using fixed cell-size access. As in standard Forth, 2!
   stores the high cell at addr and the low cell at the next cell. 2variable

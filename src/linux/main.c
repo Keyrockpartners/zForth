@@ -287,98 +287,171 @@ static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
 	return (const uint8_t *)zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
 }
 
+/*
+ * fmt: printf-style output with C conventions. A placeholder is
+ * %[flags][width][.precision][l]verb, flags from "-0+ #". Verbs d (signed),
+ * u (unsigned), x X (hex) and c take one cell, f e g one float cell; with the
+ * l prefix d u x X take a 64-bit double cell and f e g a double float, both
+ * ( lo hi ). s takes ( addr len ). %% is a literal %. Anything else is
+ * printed as is and consumes no argument.
+ */
+
+typedef struct {
+	char flags[6];
+	int width;    /* -1 if absent */
+	int prec;     /* -1 if absent */
+	int lng;      /* l prefix: two-cell argument */
+	char verb;
+	size_t len;   /* characters after the % */
+} fmt_spec;
+
+static int fmt_digits(const uint8_t *fmt, size_t n, size_t *j)
+{
+	int v = 0;
+	while(*j < n && isdigit(fmt[*j])) {
+		if(v < 1000) v = v * 10 + (fmt[*j] - '0');
+		(*j)++;
+	}
+	return v > 255 ? 255 : v;
+}
+
+/* Parse the placeholder after the % at fmt[i]; returns 0 if it isn't one */
+static int fmt_parse(const uint8_t *fmt, size_t n, size_t i, fmt_spec *sp)
+{
+	size_t j = i;
+	int k = 0;
+
+	memset(sp, 0, sizeof(*sp));
+	while(j < n && fmt[j] != '\0' && strchr("-0+ #", fmt[j])) {
+		if(k < 5) sp->flags[k++] = (char)fmt[j];
+		j++;
+	}
+	sp->width = (j < n && isdigit(fmt[j])) ? fmt_digits(fmt, n, &j) : -1;
+	sp->prec = -1;
+	if(j < n && fmt[j] == '.') {
+		j++;
+		sp->prec = fmt_digits(fmt, n, &j);
+	}
+	if(j < n && fmt[j] == 'l') {
+		sp->lng = 1;
+		j++;
+	}
+	if(j >= n || fmt[j] == '\0' || !strchr("duxXcfegs%", fmt[j])) return 0;
+	sp->verb = (char)fmt[j];
+	if(sp->lng && strchr("cs%", sp->verb)) return 0;
+	sp->len = j - i + 1;
+	return 1;
+}
+
+static int fmt_cells(const fmt_spec *sp)
+{
+	if(sp->verb == '%') return 0;
+	if(sp->verb == 's') return 2;
+	return sp->lng ? 2 : 1;
+}
+
+/* Build the C format for a placeholder: % flags width .prec, then conv */
+static void fmt_cspec(char *out, size_t size, const fmt_spec *sp, const char *conv)
+{
+	char width[8] = "", prec[8] = "";
+	if(sp->width >= 0) snprintf(width, sizeof(width), "%d", sp->width);
+	if(sp->prec >= 0) snprintf(prec, sizeof(prec), ".%d", sp->prec);
+	snprintf(out, size, "%%%s%s%s%s", sp->flags, width, prec, conv);
+}
+
 static void fmt_syscall(zf_ctx *ctx)
 {
 	zf_cell fmt_len_cell = zf_pop(ctx);
 	zf_cell fmt_addr_cell = zf_pop(ctx);
 	const uint8_t *fmt = checked_dict_range(ctx, fmt_addr_cell, fmt_len_cell);
 	size_t fmt_len = (size_t)fmt_len_cell;
+	zf_cell args[ZF_FMT_MAX_ARG_CELLS];
+	fmt_spec sp;
+	char cspec[32];
 	int cells = 0;
+	int ai;
+	size_t i;
 
-	for(size_t i = 0; i < fmt_len; i++) {
-		if(fmt[i] == '%' && i + 1 < fmt_len) {
-			switch(fmt[++i]) {
-				case 's':
-				case 'U':
-				case 'D':
-				case 'F': cells += 2; break;
-				case 'd':
-				case 'n':
-				case 'u':
-				case 'f':
-				case 'c': cells += 1; break;
-				default: break;
-			}
+	for(i = 0; i < fmt_len; i++) {
+		if(fmt[i] == '%' && fmt_parse(fmt, fmt_len, i + 1, &sp)) {
+			cells += fmt_cells(&sp);
+			i += sp.len;
 		}
 	}
-
 	if(cells > ZF_FMT_MAX_ARG_CELLS) {
 		zf_abort(ctx, ZF_ABORT_EXTERNAL);
 	}
 
-	zf_cell args[ZF_FMT_MAX_ARG_CELLS];
-	for(int i = 0; i < cells; i++) {
-		args[i] = zf_pop(ctx);
+	/* args[0] is the top of the stack, i.e. the last argument */
+	for(ai = 0; ai < cells; ai++) {
+		args[ai] = zf_pop(ctx);
 	}
 
-	int ai = cells - 1;
-	for(size_t i = 0; i < fmt_len; i++) {
-		if(fmt[i] != '%') {
+	ai = cells - 1;
+	for(i = 0; i < fmt_len; i++) {
+		if(fmt[i] != '%' || !fmt_parse(fmt, fmt_len, i + 1, &sp)) {
 			putchar((char)fmt[i]);
 			continue;
 		}
+		i += sp.len;
 
-		if(i + 1 >= fmt_len) {
-			putchar('%');
-			continue;
-		}
-
-		switch(fmt[++i]) {
+		switch(sp.verb) {
 			case '%':
 				putchar('%');
 				break;
-			case 'd':
-			case 'n':
-				printf(ZF_CELL_FMT, args[ai--]);
-				break;
-			case 'u':
-				printf("%" PRIu32, (uint32_t)args[ai--]);
-				break;
-			case 'f':
-				printf("%g", (double)zf_cell_to_float(args[ai--]));
-				break;
-			case 'U': {
-				uint64_t lo = (zf_ucell)args[ai--];
-				uint64_t hi = (zf_ucell)args[ai--];
-				printf("%" PRIu64, (hi << 32) | lo);
-				break;
-			}
-			case 'D': {
-				uint64_t lo = (zf_ucell)args[ai--];
-				uint64_t hi = (zf_ucell)args[ai--];
-				printf("%" PRId64, (int64_t)((hi << 32) | lo));
+
+			case 'd': case 'u': case 'x': case 'X': {
+				const char *conv;
+				if(sp.lng) {
+					uint64_t lo = (zf_ucell)args[ai--];
+					uint64_t hi = (zf_ucell)args[ai--];
+					uint64_t v = (hi << 32) | lo;
+					conv = sp.verb == 'd' ? PRId64 : sp.verb == 'u' ? PRIu64 : sp.verb == 'x' ? PRIx64 : PRIX64;
+					fmt_cspec(cspec, sizeof(cspec), &sp, conv);
+					if(sp.verb == 'd') printf(cspec, (int64_t)v);
+					else printf(cspec, v);
+				} else {
+					zf_cell v = args[ai--];
+					conv = sp.verb == 'd' ? PRId32 : sp.verb == 'u' ? PRIu32 : sp.verb == 'x' ? PRIx32 : PRIX32;
+					fmt_cspec(cspec, sizeof(cspec), &sp, conv);
+					if(sp.verb == 'd') printf(cspec, (int32_t)v);
+					else printf(cspec, (uint32_t)v);
+				}
 				break;
 			}
-			case 'F': {
-				zf_cell lo = args[ai--];
-				zf_cell hi = args[ai--];
-				printf("%.15g", zf_cells_to_dfloat(lo, hi));
-				break;
-			}
+
 			case 'c':
-				putchar((char)args[ai--]);
+				fmt_cspec(cspec, sizeof(cspec), &sp, "c");
+				printf(cspec, (int)(unsigned char)args[ai--]);
 				break;
+
+			case 'f': case 'e': case 'g': {
+				char conv[2] = { sp.verb, '\0' };
+				double v;
+				if(sp.lng) {
+					zf_cell lo = args[ai--];
+					zf_cell hi = args[ai--];
+					v = zf_cells_to_dfloat(lo, hi);
+				} else {
+					v = zf_cell_to_float(args[ai--]);
+				}
+				fmt_cspec(cspec, sizeof(cspec), &sp, conv);
+				printf(cspec, v);
+				break;
+			}
+
 			case 's': {
 				zf_cell addr = args[ai--];
 				zf_cell len = args[ai--];
-				const uint8_t *s = checked_dict_range(ctx, addr, len);
-				(void)fwrite(s, 1, (size_t)len, stdout);
+				const uint8_t *str = checked_dict_range(ctx, addr, len);
+				int n = (int)len;
+				fmt_spec ws = sp;
+				if(sp.prec >= 0 && sp.prec < n) n = sp.prec;
+				ws.prec = -1;
+				fmt_cspec(cspec, sizeof(cspec), &ws, ".*s");
+				printf(cspec, n, (const char *)str);
 				break;
 			}
-			default:
-				putchar('%');
-				putchar((char)fmt[i]);
-				break;
 		}
 	}
 

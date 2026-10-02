@@ -59,7 +59,23 @@ Application-specific syscalls start at `ZF_SYSCALL_USER` (`128`). For IoT device
 
 | ID | Name / Forth word | Stack effect | Required behavior |
 | --- | --- | --- | --- |
-| `ZF_SYSCALL_USER + 4` (`132`) | `fmt` | `( arg... fmt-addr fmt-len -- )` | Format and output a string from dictionary memory. Supported format sequences are `%%`, `%d` and `%n` (signed integer), `%u` (unsigned integer), `%f` (float, formatted like printf `%g`), `%D` and `%U` (signed and unsigned 64-bit double cell), `%F` (double-precision float, formatted like printf `%.15g`), `%c`, and `%s`. Format arguments are pushed before the format string, in left-to-right placeholder order. A `%s` argument is `( addr len )` and a `%D`/`%U`/`%F` argument is `( lo hi )`; every other argument is one cell. `u.`, `f.`, `d.`, `ud.` and `df.` are built on `fmt`. |
+| `ZF_SYSCALL_USER + 4` (`132`) | `fmt` | `( arg... fmt-addr fmt-len -- )` | Format and output a string from dictionary memory, following C `printf` conventions (see below). Format arguments are pushed before the format string, in left-to-right placeholder order. `u.`, `f.`, `d.`, `ud.` and `df.` are built on `fmt`. |
+
+### `fmt` placeholders
+
+A placeholder is `%[flags][width][.precision][l]verb`, with flags from `-`, `0`, `+`, space and `#`, as in C. Because the stack is untyped, the verb and the `l` prefix say how many cells an argument takes and how to read them:
+
+| Verb | Argument | With `l` prefix |
+| --- | --- | --- |
+| `d` | signed integer, 1 cell | signed 64-bit, 2 cells `( lo hi )` |
+| `u` | unsigned integer, 1 cell | unsigned 64-bit, 2 cells |
+| `x` `X` | unsigned integer in hex, 1 cell | 64-bit hex, 2 cells |
+| `c` | character, 1 cell | not allowed |
+| `f` `e` `g` | single float, 1 cell | double float, 2 cells |
+| `s` | string `( addr len )`; precision limits the length | not allowed |
+| `%` | literal `%`, no argument | not allowed |
+
+Anything that is not a valid placeholder is printed as is and consumes no argument. A host can implement each placeholder by popping its cells and passing a rebuilt C format (with the matching `PRId32`/`PRIu64`/... length modifier) to `printf` or `snprintf`; `src/linux/main.c` does exactly that.
 
 IDs `133`–`136` (formerly `floor`, `ceil`, `round`, `trunc`) are no longer used; those operations are now the built-in float words `ffloor`, `fceil`, `fround` and `ftrunc`.
 

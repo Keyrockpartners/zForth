@@ -6,7 +6,7 @@
   Primitives: f+ f- f* f/ f< f= s>f u>f f>s fsqrt ffloor fceil fround
   ftrunc. f>s truncates toward zero and saturates; NaN converts to 0. )
 
-: f.  s" %f " fmt ;
+: f.  s" %g " fmt ;
 : f>  swap f< ;
 : f<= over over f< >r f= r> | ;
 : f>= swap f<= ;

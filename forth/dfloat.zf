@@ -7,7 +7,7 @@
   dffloor dfceil dfround dftrunc. df>s and df>d truncate toward zero and
   saturate; NaN converts to 0. )
 
-: df. s" %F " fmt ;
+: df. s" %.15lg " fmt ;
 : df> 2swap df< ;
 : df<= 2over 2over df< >r df= r> | ;
 : df>= 2swap df<= ;
