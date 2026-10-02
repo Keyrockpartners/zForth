@@ -40,7 +40,6 @@
 : +!   dup @ rot + swap ! ;
 : inc  1 swap +! ;
 : dec  -1 swap +! ;
-: <    - <0 ;
 : >    swap < ;
 : <=   over over >r >r < r> r> = + ;
 : >=   swap <= ;

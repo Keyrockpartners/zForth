@@ -81,7 +81,7 @@ typedef enum {
 	PRIM_EQUAL,   PRIM_SYS,       PRIM_PICK, PRIM_COMMA,   PRIM_KEY,      PRIM_LITS,
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
 	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
-	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,
+	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,    PRIM_LT,
 #if ZF_ENABLE_DOUBLE_CELL
 	PRIM_DADD,    PRIM_DSUB,      PRIM_DULT, PRIM_UMSTAR,  PRIM_UDSTAR,   PRIM_UDDIV,
 	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,
@@ -111,7 +111,7 @@ static const char prim_names[] =
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
 	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
-	_("u<")      _("rshift")     _("u/")    _("umod")
+	_("u<")      _("rshift")     _("u/")    _("umod")  _("<")
 #if ZF_ENABLE_DOUBLE_CELL
 	_("d+")      _("d-")         _("du<")   _("um*")   _("ud*")       _("ud/")
 	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")
@@ -1420,6 +1420,14 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			/* Logical shift right of next element by top element */
 			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
 			zf_push(ctx, d1 >= 0 && d1 < ZF_CELL_BITS ? (zf_cell)((zf_ucell)d2 >> d1) : 0);
+			break;
+
+		case PRIM_LT:
+			/* Signed less-than of next element and top element. A primitive
+			 * rather than "- <0", which gives the wrong answer when the
+			 * subtraction overflows */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d2 < d1 ? ZF_TRUE : ZF_FALSE);
 			break;
 
 		case PRIM_ULT:
