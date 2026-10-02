@@ -116,6 +116,17 @@ typedef ZF_UCELL_TYPE zf_ucell;
 #define ZF_ENABLE_DOUBLE_CELL 1
 #endif
 
+/* Set to 1 to add Forth-2012 named locals, {: a b | c -- :}, compiled onto
+ * the local frame primitives. ZF_LOCAL_NAMES_SIZE bytes in zf_ctx hold the
+ * names while a definition is compiled (3 bytes per name plus its length). */
+#ifndef ZF_ENABLE_NAMED_LOCALS
+#define ZF_ENABLE_NAMED_LOCALS 1
+#endif
+
+#ifndef ZF_LOCAL_NAMES_SIZE
+#define ZF_LOCAL_NAMES_SIZE 128
+#endif
+
 /* Set to 1 to add single-precision floating point. A float is stored in one
  * cell as its IEEE-754 bit pattern, on the same stack as integers, and the
  * f+ f- f* f/ ... primitives interpret those bits. Requires 32-bit cells. */

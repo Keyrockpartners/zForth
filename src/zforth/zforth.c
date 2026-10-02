@@ -82,7 +82,10 @@ typedef enum {
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
 	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
 	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,    PRIM_LT,
-	PRIM_LOCALS,  PRIM_LGET,      PRIM_LSET, PRIM_ENDLOCALS,
+	PRIM_LOCALS,  PRIM_LGET,      PRIM_LSET, PRIM_ENDLOCALS, PRIM_2LGET,  PRIM_2LSET,
+#if ZF_ENABLE_NAMED_LOCALS
+	PRIM_LBRACE,  PRIM_TO,
+#endif
 #if ZF_ENABLE_DOUBLE_CELL
 	PRIM_DADD,    PRIM_DSUB,      PRIM_DULT, PRIM_UMSTAR,  PRIM_UDSTAR,   PRIM_UDDIV,
 	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,
@@ -113,7 +116,10 @@ static const char prim_names[] =
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
 	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
 	_("u<")      _("rshift")     _("u/")    _("umod")  _("<")
-	_("locals")  _("l@")         _("l!")    _("endlocals")
+	_("locals")  _("l@")         _("l!")    _("endlocals") _("2l@")    _("2l!")
+#if ZF_ENABLE_NAMED_LOCALS
+	_("_{:")     _("_to")
+#endif
 #if ZF_ENABLE_DOUBLE_CELL
 	_("d+")      _("d-")         _("du<")   _("um*")   _("ud*")       _("ud/")
 	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")
@@ -188,6 +194,42 @@ static void uservars_from_image(zf_ctx *ctx, const void *buf);
 static void uservars_to_image(zf_ctx *ctx);
 
 
+#if ZF_ENABLE_NAMED_LOCALS
+enum { LMODE_NONE, LMODE_ARGS, LMODE_VALS, LMODE_COMMENT };
+
+/* Forget the named locals of the definition being compiled */
+static void locals_reset(zf_ctx *ctx)
+{
+	ctx->lnames_len = 0;
+	ctx->lframe = 0;
+	ctx->lmode = LMODE_NONE;
+	ctx->lslots = 0;
+	ctx->largs = 0;
+	ctx->ldouble = 0;
+}
+
+/* Find a named local; the most recently declared match wins */
+static int local_find(zf_ctx *ctx, const char *name, zf_cell *slot, int *width)
+{
+	size_t len = strlen(name);
+	uint16_t i = 0;
+	int found = 0;
+
+	while(i < ctx->lnames_len) {
+		uint8_t l = (uint8_t)ctx->lnames[i];
+		if(l == len && memcmp(&ctx->lnames[i + 3], name, len) == 0) {
+			*slot = (uint8_t)ctx->lnames[i + 1];
+			*width = (uint8_t)ctx->lnames[i + 2];
+			found = 1;
+		}
+		i += 3 + l;
+	}
+	return found;
+}
+#else
+#define locals_reset(ctx) ((void)0)
+#endif
+
 static void checkpoint_save(zf_ctx *ctx, zf_addr addr)
 {
 	zf_checkpoint cp;
@@ -215,6 +257,7 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	ctx->ip = 0;
 	ctx->read_len = 0;
 	COMPILING(ctx) = 0;
+	locals_reset(ctx);
 	POSTPONE(ctx) = 0;
 	/* Unwind the return stack: the code being run may have been discarded.
 	 * The data stack is left alone, as for ANS MARKER */
@@ -1146,6 +1189,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			} else {
 				create(ctx, input, 0);
 				COMPILING(ctx) = 1;
+				locals_reset(ctx);
 			}
 			break;
 
@@ -1156,9 +1200,13 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_SEMICOL:
 			/* End of word definition */
+#if ZF_ENABLE_NAMED_LOCALS
+			if(ctx->lframe) dict_add_op(ctx, PRIM_ENDLOCALS);
+#endif
 			dict_add_op(ctx, PRIM_EXIT);
 			trace(ctx, "\n===");
 			COMPILING(ctx) = 0;
+			locals_reset(ctx);
 			break;
 
 		case PRIM_LITERAL:
@@ -1475,6 +1523,94 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			ctx->rstack[addr] = zf_pop(ctx);
 			break;
 
+		case PRIM_2LGET:
+			/* ( k -- lo hi ) two-cell local in slots k and k+1 */
+			d1 = zf_pop(ctx);
+			addr = local_slot(ctx, d1);
+			code = local_slot(ctx, d1 + 1);
+			zf_push(ctx, ctx->rstack[addr]);
+			zf_push(ctx, ctx->rstack[code]);
+			break;
+
+		case PRIM_2LSET:
+			/* ( lo hi k -- ) */
+			d1 = zf_pop(ctx);
+			addr = local_slot(ctx, d1);
+			code = local_slot(ctx, d1 + 1);
+			ctx->rstack[code] = zf_pop(ctx);
+			ctx->rstack[addr] = zf_pop(ctx);
+			break;
+
+#if ZF_ENABLE_NAMED_LOCALS
+		case PRIM_LBRACE:
+			/* {: args | vals -- comment :} declares named locals for the
+			 * definition being compiled. Called once per word of the
+			 * declaration, each time asking for the next word. At :} it
+			 * compiles "0 ... n locals"; afterwards a local's name compiles
+			 * "k l@" (or "k 2l@" for d: locals) and ; closes the frame. */
+			if(!COMPILING(ctx)) zf_abort(ctx, ZF_ABORT_COMPILE_ONLY_WORD);
+			if(input == NULL) {
+				CHECK(ctx, !ctx->lframe && ctx->lmode == LMODE_NONE, ZF_ABORT_BAD_LOCALS);
+				ctx->lmode = LMODE_ARGS;
+				ctx->input_state = ZF_INPUT_PASS_WORD;
+				break;
+			}
+			if(strcmp(input, ":}") == 0) {
+				CHECK(ctx, !ctx->ldouble, ZF_ABORT_BAD_LOCALS);
+				for(code = ctx->largs; code < ctx->lslots; code++) dict_add_lit(ctx, 0);
+				dict_add_lit(ctx, ctx->lslots);
+				dict_add_op(ctx, PRIM_LOCALS);
+				ctx->lframe = 1;
+				ctx->lmode = LMODE_NONE;
+				break;
+			}
+			if(ctx->lmode != LMODE_COMMENT) {
+				if(strcmp(input, "|") == 0) {
+					CHECK(ctx, ctx->lmode == LMODE_ARGS && !ctx->ldouble, ZF_ABORT_BAD_LOCALS);
+					ctx->lmode = LMODE_VALS;
+				} else if(strcmp(input, "--") == 0) {
+					CHECK(ctx, !ctx->ldouble, ZF_ABORT_BAD_LOCALS);
+					ctx->lmode = LMODE_COMMENT;
+				} else if(strcmp(input, "d:") == 0) {
+					CHECK(ctx, !ctx->ldouble, ZF_ABORT_BAD_LOCALS);
+					ctx->ldouble = 1;
+				} else {
+					size_t len = strlen(input);
+					int width = ctx->ldouble ? 2 : 1;
+					/* A ; here almost certainly means a missing :} */
+					CHECK(ctx, strcmp(input, ";") != 0, ZF_ABORT_BAD_LOCALS);
+					CHECK(ctx, len <= 31 && ctx->lnames_len + 3 + len <= ZF_LOCAL_NAMES_SIZE, ZF_ABORT_BAD_LOCALS);
+					CHECK(ctx, ctx->lslots + width <= 255, ZF_ABORT_BAD_LOCALS);
+					ctx->lnames[ctx->lnames_len] = (char)len;
+					ctx->lnames[ctx->lnames_len + 1] = (char)ctx->lslots;
+					ctx->lnames[ctx->lnames_len + 2] = (char)width;
+					memcpy(&ctx->lnames[ctx->lnames_len + 3], input, len);
+					ctx->lnames_len += 3 + len;
+					ctx->lslots += width;
+					if(ctx->lmode == LMODE_ARGS) ctx->largs += width;
+					ctx->ldouble = 0;
+				}
+			}
+			ctx->input_state = ZF_INPUT_PASS_WORD;
+			break;
+
+		case PRIM_TO:
+			/* x to name: compile a store into a named local */
+			if(!COMPILING(ctx)) zf_abort(ctx, ZF_ABORT_COMPILE_ONLY_WORD);
+			if(input == NULL) {
+				ctx->input_state = ZF_INPUT_PASS_WORD;
+			} else {
+				int width = 1;
+				d1 = 0;
+				if(!ctx->lframe || !local_find(ctx, input, &d1, &width)) {
+					zf_abort(ctx, ZF_ABORT_NOT_A_WORD);
+				}
+				dict_add_lit(ctx, d1);
+				dict_add_op(ctx, width == 2 ? PRIM_2LSET : PRIM_LSET);
+			}
+			break;
+#endif
+
 		case PRIM_ENDLOCALS:
 			/* Close the frame, dropping anything pushed above it */
 			CHECK(ctx, ctx->fp >= 2 && ctx->fp <= RSP(ctx), ZF_ABORT_RSTACK_UNDERRUN);
@@ -1766,6 +1902,19 @@ static void handle_word(zf_ctx *ctx, const char *buf)
 		return;
 	}
 
+#if ZF_ENABLE_NAMED_LOCALS
+	/* Named locals shadow dictionary words in the definition */
+	if(COMPILING(ctx) && ctx->lframe) {
+		zf_cell slot;
+		int width;
+		if(local_find(ctx, buf, &slot, &width)) {
+			dict_add_lit(ctx, slot);
+			dict_add_op(ctx, width == 2 ? PRIM_2LGET : PRIM_LGET);
+			return;
+		}
+	}
+#endif
+
 	/* Look up the word in the dictionary */
 
 	found = find_word(ctx, buf, &w, &c);
@@ -1782,6 +1931,10 @@ static void handle_word(zf_ctx *ctx, const char *buf)
 		if(COMPILING(ctx) && (POSTPONE(ctx) || !(flags & ZF_FLAG_IMMEDIATE))) {
 			if(flags & ZF_FLAG_PRIM) {
 				dict_get_cell(ctx, c, &d);
+#if ZF_ENABLE_NAMED_LOCALS
+				/* exit leaves the definition, so close its named frame */
+				if(d == PRIM_EXIT && ctx->lframe) dict_add_op(ctx, PRIM_ENDLOCALS);
+#endif
 				dict_add_op(ctx, d);
 			} else {
 				dict_add_op(ctx, c);
@@ -1899,6 +2052,7 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	LATEST(ctx) = 0;
 	TRACE(ctx) = enable_trace;
 	COMPILING(ctx) = 0;
+	locals_reset(ctx);
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
@@ -2042,6 +2196,7 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 	} else {
 		ctx->abort_jmp_valid--;
 		COMPILING(ctx) = 0;
+		locals_reset(ctx);
 		RSP(ctx) = 0;
 		ctx->fp = 0;
 		DSP(ctx) = 0;
@@ -2143,6 +2298,7 @@ static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, z
 	uservars_from_image(ctx, buf);
 	TRACE(ctx) = trace;
 	COMPILING(ctx) = 0;
+	locals_reset(ctx);
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
@@ -2238,6 +2394,7 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	uservars_from_image(ctx, buf);
 	TRACE(ctx) = trace;
 	COMPILING(ctx) = 0;
+	locals_reset(ctx);
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;

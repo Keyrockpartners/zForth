@@ -4,15 +4,19 @@ include forth/memaccess.zf
 
 ( custom words )
 
-( Local variables are frames on the return stack, built in as primitives:
-    n locals      open a frame of n locals filled from the data stack, the
-                  deepest value becoming local 0 - push zeros first for
-                  locals that are not parameters
+( Local variables, built in. The usual form is Forth-2012 named locals:
+    : hyp {: a b | c -- result :} a a * b b * + to c c ;
+  Names before | are filled from the data stack, the deepest value first;
+  names after | start at zero; anything after -- is a comment. A name pushes
+  its value and x to name stores. A d: prefix makes a two-cell local, for a
+  64-bit integer or double float: {: d: ts n :}. ; and exit close the frame.
+  Underneath are frames on the return stack, usable directly:
+    n locals      open a frame of n locals filled from the data stack
     k l@  x k l!  read or write local k
+    k 2l@  d k 2l!  read or write a two-cell local in slots k and k+1
     endlocals     close the frame, before ; or any exit
   Locals stay addressable across >r, do loops and nested calls, and
-  recursion works. A two-cell value uses two slots. Example:
-    : hyp 0 3 locals 0 l@ dup * 1 l@ dup * + 2 l! 2 l@ endlocals ; )
+  recursion works. )
 : dropall 0 dsp ! ;
 : chkpt here chkpt-size allot >r : ' dropall , r> dup >r postpone literal ' chkpt-restore , postpone ; postpone immediate r> chkpt! ;
 : 2drop drop drop ;

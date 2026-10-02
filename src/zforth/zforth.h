@@ -49,6 +49,10 @@ extern "C"
 #define ZF_ENABLE_DFLOAT 0
 #endif
 
+#ifndef ZF_ENABLE_NAMED_LOCALS
+#define ZF_ENABLE_NAMED_LOCALS 0
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -64,7 +68,8 @@ typedef enum {
 	ZF_ABORT_INVALID_SIZE,
 	ZF_ABORT_DIVISION_BY_ZERO,
 	ZF_ABORT_INVALID_USERVAR,
-	ZF_ABORT_EXTERNAL
+	ZF_ABORT_EXTERNAL,
+	ZF_ABORT_BAD_LOCALS
 } zf_result;
 
 typedef enum {
@@ -137,6 +142,18 @@ typedef struct {
 
 	/* Name buffer */
 	char name_buf[32];
+
+#if ZF_ENABLE_NAMED_LOCALS
+	/* Named locals of the definition being compiled: entries of
+	 * [length][slot][width][name...] */
+	char lnames[ZF_LOCAL_NAMES_SIZE];
+	uint16_t lnames_len;
+	uint8_t lframe;   /* a {: :} frame is open in this definition */
+	uint8_t lmode;    /* parsing state inside {: :} */
+	uint8_t lslots;   /* slots declared so far */
+	uint8_t largs;    /* slots filled from the data stack */
+	uint8_t ldouble;  /* next name is a two-cell local (d:) */
+#endif
 
 } zf_ctx;
 

@@ -44,6 +44,7 @@ zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
 		case ZF_ABORT_COMPILE_ONLY_WORD: msg = "compile-only word"; break;
 		case ZF_ABORT_INVALID_SIZE: msg = "invalid size"; break;
 		case ZF_ABORT_DIVISION_BY_ZERO: msg = "division by zero"; break;
+		case ZF_ABORT_BAD_LOCALS: msg = "bad locals declaration"; break;
 		default: msg = "unknown error";
 	}
 
