@@ -119,7 +119,6 @@ typedef enum {
 	PRIM_EQUAL,   PRIM_SYS,       PRIM_PICK, PRIM_COMMA,   PRIM_KEY,      PRIM_LITS,
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
 	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
-	PRIM_DATA_TO_ADDR,
 	PRIM_COUNT
 } zf_prim;
 
@@ -131,8 +130,7 @@ static const char prim_names[] =
 	_("jmp")     _("jmp0")       _("'")     _("_(")    _(">r")        _("r>")
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
-	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
-	_("data>addr");
+	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot");
 #endif
 
 typedef struct {
@@ -324,11 +322,37 @@ static int range_end(zf_addr addr, size_t len, size_t *end)
 	return 1;
 }
 
+/* The data window [ZF_DATA_ADDR, ZF_DATA_ADDR + size) holds the storage of
+ * variables compiled into a prebuilt image, so they stay writable when the
+ * image itself is mounted read-only. While exporting (data_compile) it is
+ * backed by data_buf; after import/mount it is backed by the data_len bytes
+ * reserved at data_base in the writable dictionary. */
+
+static int is_data_addr(zf_addr addr)
+{
+	return (size_t)addr >= (size_t)ZF_DATA_ADDR;
+}
+
+static size_t data_window_size(const zf_ctx *ctx)
+{
+	return ctx->data_compile ? (size_t)ctx->data_here : (size_t)ctx->data_len;
+}
+
+static int data_window_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t off = (size_t)addr - (size_t)ZF_DATA_ADDR;
+	size_t size = data_window_size(ctx);
+	return off <= size && len <= size - off;
+}
+
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
 
+	if(is_data_addr(addr)) {
+		return data_window_has_range(ctx, addr, len);
+	}
 	if(!range_end(addr, len, &end)) {
 		return 0;
 	}
@@ -356,6 +380,9 @@ static int dict_has_writable_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 	size_t start = (size_t)addr;
 	size_t end;
 
+	if(is_data_addr(addr)) {
+		return data_window_has_range(ctx, addr, len);
+	}
 	if(!range_end(addr, len, &end)) {
 		return 0;
 	}
@@ -371,6 +398,20 @@ static size_t dict_writable_offset(zf_ctx *ctx, zf_addr addr)
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
 	return (size_t)addr - (size_t)DICT_BASE(ctx);
+}
+
+static uint8_t *data_window_ptr(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t off = (size_t)addr - (size_t)ZF_DATA_ADDR;
+	CHECK(ctx, data_window_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	if(ctx->data_compile) {
+#if ZF_ENABLE_DYNAMIC_DICT
+		return ctx->data_buf ? ctx->data_buf + off : NULL;
+#else
+		return NULL;
+#endif
+	}
+	return ctx->dict + dict_writable_offset(ctx, ctx->data_base) + off;
 }
 
 static void uservars_from_image(zf_ctx *ctx, const void *buf)
@@ -411,6 +452,9 @@ static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
 	if(needed <= ctx->dict_cap) {
 		return;
 	}
+	if((size_t)DICT_BASE(ctx) + needed > (size_t)ZF_DATA_ADDR) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
 
 	new_cap = ctx->dict_cap;
 	while(new_cap < needed) {
@@ -430,6 +474,36 @@ static void ensure_dict_capacity(zf_ctx *ctx, zf_addr addr, size_t len)
 	ctx->dict_cap = new_cap;
 }
 #endif
+
+static void data_buf_reserve(zf_ctx *ctx, zf_addr size)
+{
+#if ZF_ENABLE_DYNAMIC_DICT
+	size_t new_cap;
+	uint8_t *new_buf;
+
+	CHECK(ctx, (size_t)size <= (size_t)(zf_addr)-1 - (size_t)ZF_DATA_ADDR, ZF_ABORT_OUTSIDE_MEM);
+	if((size_t)size <= ctx->data_buf_cap) {
+		return;
+	}
+
+	new_cap = ctx->data_buf_cap;
+	while(new_cap < (size_t)size) {
+		new_cap += ZF_DICT_SIZE;
+	}
+
+	new_buf = (uint8_t *)realloc(ctx->data_buf, new_cap);
+	if(new_buf == NULL) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+
+	memset(new_buf + ctx->data_buf_cap, 0, new_cap - ctx->data_buf_cap);
+	ctx->data_buf = new_buf;
+	ctx->data_buf_cap = new_cap;
+#else
+	/* Exporting with a data window needs a heap-backed buffer */
+	CHECK(ctx, size == 0, ZF_ABORT_OUTSIDE_MEM);
+#endif
+}
 
 
 /* Tracing functions. If disabled, the trace() function is replaced by an empty
@@ -577,6 +651,12 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 	const uint8_t *p = (const uint8_t *)buf;
 	size_t i = len;
 	size_t off;
+	if(is_data_addr(addr)) {
+		uint8_t *dst = data_window_ptr(ctx, addr, len);
+		ext_owner_remove_range(ctx, addr, len);
+		if(len) memcpy(dst, buf, len);
+		return len;
+	}
 	#if ZF_ENABLE_DYNAMIC_DICT
 	ensure_dict_capacity(ctx, addr, len);
 	#endif
@@ -591,6 +671,11 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
+	if(is_data_addr(addr)) {
+		const uint8_t *src = data_window_ptr(ctx, addr, len);
+		if(len) memcpy(buf, src, len);
+		return;
+	}
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	while(len--) {
 #if ZF_ENABLE_ROM_DICT
@@ -607,6 +692,9 @@ const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
+	if(is_data_addr(addr)) {
+		return data_window_ptr(ctx, addr, len);
+	}
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	if(!range_end(addr, len, &end)) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
@@ -1011,24 +1099,22 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_DATA_HERE:
-			zf_push(ctx, ctx->data_compile ? ctx->data_here : HERE(ctx));
+			if(ctx->data_compile) {
+				zf_push(ctx, (zf_cell)((size_t)ZF_DATA_ADDR + (size_t)ctx->data_here));
+			} else {
+				zf_push(ctx, HERE(ctx));
+			}
 			break;
 
 		case PRIM_DATA_ALLOT:
 			d1 = zf_pop(ctx);
 			if(ctx->data_compile) {
-				allot_addr(ctx, &ctx->data_here, d1);
+				zf_addr size = ctx->data_here;
+				allot_addr(ctx, &size, d1);
+				data_buf_reserve(ctx, size);
+				ctx->data_here = size;
 			} else {
 				allot_addr(ctx, &HERE(ctx), d1);
-			}
-			break;
-
-		case PRIM_DATA_TO_ADDR:
-			d1 = zf_require_num(ctx, zf_pop(ctx));
-			if(d1 >= 0 && d1 < (zf_cell)ctx->data_len) {
-				zf_push(ctx, (zf_cell)(ctx->data_base + (zf_addr)d1));
-			} else {
-				zf_push(ctx, d1);
 			}
 			break;
 
@@ -1391,6 +1477,8 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	#endif
 
 	#if ZF_ENABLE_DYNAMIC_DICT
+	ctx->data_buf = NULL;
+	ctx->data_buf_cap = 0;
 	ctx->dict = (uint8_t *)malloc(ZF_DICT_SIZE);
 	ctx->dict_cap = ZF_DICT_SIZE;
 	if(ctx->dict == NULL) {
@@ -1428,6 +1516,9 @@ void zf_free(zf_ctx *ctx)
 	free(ctx->dict);
 	ctx->dict = NULL;
 	ctx->dict_cap = 0;
+	free(ctx->data_buf);
+	ctx->data_buf = NULL;
+	ctx->data_buf_cap = 0;
 	#else
 	(void)ctx;
 	#endif
@@ -1546,7 +1637,9 @@ void *zf_dump(zf_ctx *ctx, size_t *len)
 		if(len) *len = 0;
 		return NULL;
 	}
-	if(DICT_BASE(ctx) != 0) {
+	/* A mounted ROM, or an image imported with a data window, can't be dumped
+	 * as a plain image: its variables live outside the dictionary. */
+	if(DICT_BASE(ctx) != 0 || ctx->data_len != 0) {
 		if(len) *len = 0;
 		return NULL;
 	}
@@ -1567,6 +1660,19 @@ size_t zf_dict_data_size(zf_ctx *ctx)
 {
 	if(ctx == NULL) return 0;
 	return (size_t)(ctx->data_compile ? ctx->data_here : ctx->data_len);
+}
+
+const void *zf_dict_data(zf_ctx *ctx)
+{
+	if(ctx == NULL || zf_dict_data_size(ctx) == 0) return NULL;
+	if(ctx->data_compile) {
+#if ZF_ENABLE_DYNAMIC_DICT
+		return ctx->data_buf;
+#else
+		return NULL;
+#endif
+	}
+	return ctx->dict + ((size_t)ctx->data_base - (size_t)DICT_BASE(ctx));
 }
 
 size_t zf_dict_size(zf_ctx *ctx)
@@ -1643,10 +1749,13 @@ zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, siz
 	zf_result r;
 	zf_addr trace;
 	zf_addr data_base;
+	size_t image_len;
 
 	if(ctx == NULL) return ZF_ABORT_INTERNAL_ERROR;
+	if(buf == NULL || data_len > len) return ZF_ABORT_OUTSIDE_MEM;
+	image_len = len - data_len;
 	trace = TRACE(ctx);
-	r = dict_import_prepare(ctx, buf, len, trace);
+	r = dict_import_prepare(ctx, buf, image_len, trace);
 	if(r != ZF_OK) return r;
 	if(data_len > (size_t)((zf_addr)-1)) return ZF_ABORT_OUTSIDE_MEM;
 
@@ -1657,7 +1766,7 @@ zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, siz
 	#else
 	if(!dict_has_writable_range(ctx, data_base, data_len)) return ZF_ABORT_OUTSIDE_MEM;
 	#endif
-	memset(ctx->dict + ((size_t)data_base - (size_t)DICT_BASE(ctx)), 0, data_len);
+	memcpy(ctx->dict + ((size_t)data_base - (size_t)DICT_BASE(ctx)), (const uint8_t *)buf + image_len, data_len);
 	ctx->data_base = data_base;
 	ctx->data_len = (zf_addr)data_len;
 	HERE(ctx) = data_base + (zf_addr)data_len;
@@ -1669,6 +1778,7 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 {
 #if ZF_ENABLE_ROM_DICT
 	zf_addr trace;
+	size_t rom_len;
 
 	#if ZF_ENABLE_DYNAMIC_DICT
 	if(ctx == NULL || ctx->dict == NULL) {
@@ -1679,29 +1789,30 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 		return ZF_ABORT_INTERNAL_ERROR;
 	}
 	#endif
-	if(buf == NULL || len < ZF_USERVAR_COUNT * sizeof(zf_addr) ||
-	   len > (size_t)((zf_addr)-1) || data_len > (size_t)((zf_addr)-1) ||
-	   (zf_addr)len > (zf_addr)-1 - (zf_addr)data_len) {
+	if(buf == NULL || data_len > len || len > (size_t)((zf_addr)-1) ||
+	   len - data_len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
+	rom_len = len - data_len;
 
 	trace = TRACE(ctx);
 	ctx->rom_dict = (const uint8_t *)buf;
-	ctx->rom_len = (zf_addr)len;
-	ctx->dict_base = (zf_addr)len;
-	ctx->data_base = (zf_addr)len;
+	ctx->rom_len = (zf_addr)rom_len;
+	ctx->dict_base = (zf_addr)rom_len;
+	ctx->data_base = (zf_addr)rom_len;
 	ctx->data_len = (zf_addr)data_len;
 	ctx->data_here = 0;
 	ctx->data_compile = 0;
 
 	#if ZF_ENABLE_DYNAMIC_DICT
-	ensure_dict_capacity(ctx, (zf_addr)len, data_len);
+	ensure_dict_capacity(ctx, (zf_addr)rom_len, data_len);
 	#else
 	if(data_len > dict_writable_capacity(ctx)) {
 		return ZF_ABORT_OUTSIDE_MEM;
 	}
 	#endif
 	memset(ctx->dict, 0, dict_writable_capacity(ctx));
+	memcpy(ctx->dict, (const uint8_t *)buf + rom_len, data_len);
 	uservars_from_image(ctx, buf);
 	#if ZFORTH_EXT_OS_OBJECTS
 	ctx->ext_owner_count = 0;
@@ -1711,7 +1822,7 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
-	HERE(ctx) = (zf_addr)(len + data_len);
+	HERE(ctx) = (zf_addr)len;
 
 	if((size_t)HERE(ctx) > dict_capacity(ctx)) {
 		return ZF_ABORT_OUTSIDE_MEM;

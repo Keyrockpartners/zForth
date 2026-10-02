@@ -87,7 +87,7 @@ static void save(zf_ctx *ctx, const char *fname)
 	void *p = zf_dump(ctx, NULL);
 	FILE *f;
 	if(p == NULL) {
-		fprintf(stderr, "dictionary dump unavailable for mounted ROM dictionary\n");
+		fprintf(stderr, "dictionary dump unavailable for prebuilt dictionary\n");
 		return;
 	}
 	f = fopen(fname, "wb");
@@ -229,10 +229,13 @@ static void emit_header(zf_ctx *ctx, const char *name)
 	char symbol[128];
 	char guard[132];
 	const unsigned char *dict = (const unsigned char *)zf_dump(ctx, NULL);
-	size_t len = zf_dict_size(ctx);
+	const unsigned char *data = (const unsigned char *)zf_dict_data(ctx);
+	size_t dict_len = zf_dict_size(ctx);
+	size_t data_len = zf_dict_data_size(ctx);
+	size_t len = dict_len + data_len;
 	size_t i;
 	if(dict == NULL) {
-		fprintf(stderr, "dictionary dump unavailable for mounted ROM dictionary\n");
+		fprintf(stderr, "dictionary dump unavailable for prebuilt dictionary\n");
 		return;
 	}
 
@@ -242,6 +245,8 @@ static void emit_header(zf_ctx *ctx, const char *name)
 	printf("#ifndef %s\n", guard);
 	printf("#define %s\n\n", guard);
 	printf("#include <stddef.h>\n\n");
+	printf("/* Dictionary image followed by the initial contents of the data window\n");
+	printf(" * (the last %s_data_len bytes) */\n", symbol);
 	printf("static const unsigned char %s[] = {\n", symbol);
 
 	for(i = 0; i < len; i++) {
@@ -249,7 +254,7 @@ static void emit_header(zf_ctx *ctx, const char *name)
 			printf("    ");
 		}
 
-		printf("0x%02x", dict[i]);
+		printf("0x%02x", i < dict_len ? dict[i] : data[i - dict_len]);
 		if(i + 1 < len) {
 			printf(", ");
 		}
@@ -265,7 +270,7 @@ static void emit_header(zf_ctx *ctx, const char *name)
 
 	printf("};\n");
 	printf("static const size_t %s_len = sizeof(%s);\n", symbol, symbol);
-	printf("static const size_t %s_data_len = %zu;\n\n", symbol, zf_dict_data_size(ctx));
+	printf("static const size_t %s_data_len = %zu;\n\n", symbol, data_len);
 	printf("#endif\n");
 }
 
@@ -274,8 +279,7 @@ static void emit_header(zf_ctx *ctx, const char *name)
 
 static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
 {
-	size_t cap = zf_dict_capacity(ctx);
-	if(!(addr >= 0) || !(len >= 0) || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
+	if(!(addr >= 0) || !(len >= 0) || addr > (zf_addr)-1 || len > (zf_addr)-1) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
 	return (const uint8_t *)zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
@@ -373,11 +377,7 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 		case ZF_SYSCALL_TELL: {
 			zf_cell len = zf_pop(ctx);
 			zf_cell addr = zf_pop(ctx);
-			size_t cap = zf_dict_capacity(ctx);
-			if(addr < 0 || len < 0 || (size_t)addr > cap || (size_t)len > cap - (size_t)addr) {
-				zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
-			}
-			const void *buf = zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
+			const void *buf = checked_dict_range(ctx, addr, len);
 			(void)fwrite(buf, 1, (size_t)len, stdout);
 			fflush(stdout); }
 			break;

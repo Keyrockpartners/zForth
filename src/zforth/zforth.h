@@ -21,6 +21,10 @@ extern "C"
 #define ZF_ENABLE_ROM_DICT 0
 #endif
 
+#ifndef ZF_DATA_ADDR
+#define ZF_DATA_ADDR 0x40000000u
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -110,6 +114,10 @@ typedef struct zf_ctx {
 	zf_addr data_len;
 	zf_addr data_here;
 	uint8_t data_compile;
+#if ZF_ENABLE_DYNAMIC_DICT
+	uint8_t *data_buf;
+	size_t data_buf_cap;
+#endif
 #if ZF_ENABLE_ROM_DICT
 	const uint8_t *rom_dict;
 	zf_addr rom_len;
@@ -158,6 +166,7 @@ void zf_dict_set_data_compile(zf_ctx *ctx, int enable);
 size_t zf_dict_data_size(zf_ctx *ctx);
 size_t zf_dict_size(zf_ctx *ctx);
 size_t zf_dict_capacity(zf_ctx *ctx);
+const void *zf_dict_data(zf_ctx *ctx);
 zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len);
 zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);
 zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);

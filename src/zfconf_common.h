@@ -21,6 +21,15 @@
 #define ZF_ENABLE_ROM_DICT 0
 #endif
 
+/* Base address of the data window. Variables defined while exporting a
+ * prebuilt dictionary (zforth -H) get their storage here instead of inline in
+ * the image, so they stay writable when the image is mounted from ROM. The
+ * window is backed by RAM at runtime; the dictionary itself may never grow up
+ * to this address. */
+#ifndef ZF_DATA_ADDR
+#define ZF_DATA_ADDR 0x40000000u
+#endif
+
 /* Set to 1 to enable opaque host/OS object cells. Disabled by default so
  * numeric-only builds do not require host object hooks or extra storage. */
 #ifndef ZFORTH_EXT_OS_OBJECTS

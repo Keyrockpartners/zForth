@@ -56,10 +56,16 @@
 ( memory management )
 
 : allot  h +!  ;
-: var : ' lit , here var-max-size allot here swap ! var-max-size allot postpone ; ;
 : const : ' lit , , postpone ; ;
 : constant >r : r> postpone literal postpone ; ;
-: variable >r here r> postpone , constant ;
+
+( Variable storage comes from data-here/data-allot: inline in the dictionary
+  normally, or in the RAM data window when exporting a prebuilt ROM image.
+  Always reserve var-max-size so storing a larger value later can't overwrite
+  whatever follows. )
+
+: var  data-here var-max-size data-allot 0 over ! constant ;
+: variable >r data-here var-max-size data-allot r> over ! constant ;
 
 ( 'begin' gets the current address, a jump or conditional jump back is generated
   by 'again', 'until' )
