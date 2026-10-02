@@ -658,6 +658,10 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 		return len;
 	}
 	#if ZF_ENABLE_DYNAMIC_DICT
+	/* Only grow for writes starting at or below HERE (compiling, or filling
+	 * allotted space), so a stray store to a large address can't make the
+	 * dictionary allocate up to it */
+	CHECK(ctx, addr <= HERE(ctx) || dict_has_writable_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	ensure_dict_capacity(ctx, addr, len);
 	#endif
 	CHECK(ctx, dict_has_writable_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
