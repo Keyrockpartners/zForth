@@ -4,6 +4,11 @@
 zForth
 ======
 
+> **This fork** is the engine for the BlueStreak device platform: 32-bit
+> cells, floats and 64-bit integers, local frames and ROM images (see
+> [SYSCALLS.md](SYSCALLS.md) for what a host implements). The platform and
+> the ZGo language built on it live in `Keyrockpartners/bs-zgo-device`.
+
 
 From Wikipedia:
 
