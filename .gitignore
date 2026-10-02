@@ -10,3 +10,4 @@ zforth.save
 openspec
 .opencode
 zforth_dict.h
+tests/build
