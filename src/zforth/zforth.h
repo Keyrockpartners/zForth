@@ -123,6 +123,7 @@ typedef struct {
 
 	/* State and stack and interpreter pointers */
 	zf_input_state input_state;
+	zf_addr fp; /* local variable frame pointer into rstack, 0 if none */
 	zf_addr ip;
 
 	/* setjmp env for handling aborts */

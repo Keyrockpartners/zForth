@@ -82,6 +82,7 @@ typedef enum {
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
 	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
 	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,    PRIM_LT,
+	PRIM_LOCALS,  PRIM_LGET,      PRIM_LSET, PRIM_ENDLOCALS,
 #if ZF_ENABLE_DOUBLE_CELL
 	PRIM_DADD,    PRIM_DSUB,      PRIM_DULT, PRIM_UMSTAR,  PRIM_UDSTAR,   PRIM_UDDIV,
 	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,
@@ -112,6 +113,7 @@ static const char prim_names[] =
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
 	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
 	_("u<")      _("rshift")     _("u/")    _("umod")  _("<")
+	_("locals")  _("l@")         _("l!")    _("endlocals")
 #if ZF_ENABLE_DOUBLE_CELL
 	_("d+")      _("d-")         _("du<")   _("um*")   _("ud*")       _("ud/")
 	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")
@@ -217,6 +219,7 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	/* Unwind the return stack: the code being run may have been discarded.
 	 * The data stack is left alone, as for ANS MARKER */
 	RSP(ctx) = 0;
+	ctx->fp = 0;
 }
 
 static size_t dict_writable_capacity(const zf_ctx *ctx)
@@ -924,6 +927,7 @@ static void execute(zf_ctx *ctx, zf_addr addr)
 {
 	ctx->ip = addr;
 	RSP(ctx) = 0;
+	ctx->fp = 0;
 	zf_pushr(ctx, 0);
 
 	trace(ctx, "\n[%s/" ZF_ADDR_FMT "] ", op_name(ctx, ctx->ip), ctx->ip);
@@ -1103,6 +1107,17 @@ static zf_cell float_to_cell_int(float f)
 	return (zf_cell)f;
 }
 #endif
+
+/* Return-stack index of local k in the open frame, aborting if there is no
+ * frame or k is out of range */
+static zf_addr local_slot(zf_ctx *ctx, zf_cell k)
+{
+	zf_addr fp = ctx->fp;
+	CHECK(ctx, fp >= 2 && fp <= RSP(ctx), ZF_ABORT_OUTSIDE_MEM);
+	CHECK(ctx, k >= 0 && k < ctx->rstack[fp - 1], ZF_ABORT_OUTSIDE_MEM);
+	CHECK(ctx, fp + (zf_addr)k < RSP(ctx), ZF_ABORT_OUTSIDE_MEM);
+	return fp + (zf_addr)k;
+}
 
 static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 {
@@ -1420,6 +1435,52 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			/* Logical shift right of next element by top element */
 			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
 			zf_push(ctx, d1 >= 0 && d1 < ZF_CELL_BITS ? (zf_cell)((zf_ucell)d2 >> d1) : 0);
+			break;
+
+		/* Local variable frames on the return stack:
+		 *
+		 *   rstack[fp-2]  caller's fp
+		 *   rstack[fp-1]  number of locals n
+		 *   rstack[fp+k]  local k, 0 <= k < n
+		 *
+		 * fp is 0 when no frame is open. Addressing through fp keeps locals
+		 * reachable however much >r, loops and nested calls push above them. */
+
+		case PRIM_LOCALS:
+			/* ( x0 ... xn-1 n -- ) open a frame, local k = xk */
+			d1 = zf_pop(ctx);
+			CHECK(ctx, d1 >= 0, ZF_ABORT_INVALID_SIZE);
+			CHECK(ctx, (zf_addr)d1 <= DSP(ctx), ZF_ABORT_DSTACK_UNDERRUN);
+			zf_pushr(ctx, (zf_cell)ctx->fp);
+			zf_pushr(ctx, d1);
+			addr = RSP(ctx);
+			for(code = 0; code < (zf_addr)d1; code++) {
+				zf_pushr(ctx, ctx->dstack[DSP(ctx) - (zf_addr)d1 + code]);
+			}
+			DSP(ctx) -= (zf_addr)d1;
+			ctx->fp = addr;
+			break;
+
+		case PRIM_LGET:
+			/* ( k -- x ) */
+			d1 = zf_pop(ctx);
+			addr = local_slot(ctx, d1);
+			zf_push(ctx, ctx->rstack[addr]);
+			break;
+
+		case PRIM_LSET:
+			/* ( x k -- ) */
+			d1 = zf_pop(ctx);
+			addr = local_slot(ctx, d1);
+			ctx->rstack[addr] = zf_pop(ctx);
+			break;
+
+		case PRIM_ENDLOCALS:
+			/* Close the frame, dropping anything pushed above it */
+			CHECK(ctx, ctx->fp >= 2 && ctx->fp <= RSP(ctx), ZF_ABORT_RSTACK_UNDERRUN);
+			addr = ctx->fp;
+			ctx->fp = (zf_addr)ctx->rstack[addr - 2];
+			RSP(ctx) = addr - 2;
 			break;
 
 		case PRIM_LT:
@@ -1841,6 +1902,7 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+	ctx->fp = 0;
 	uservars_to_image(ctx);
 
 	return ZF_OK;
@@ -1981,6 +2043,7 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 		ctx->abort_jmp_valid--;
 		COMPILING(ctx) = 0;
 		RSP(ctx) = 0;
+		ctx->fp = 0;
 		DSP(ctx) = 0;
 		return r;
 	}
@@ -2083,6 +2146,7 @@ static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, z
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+	ctx->fp = 0;
 
 	if((size_t)HERE(ctx) > dict_capacity(ctx)) {
 		return ZF_ABORT_OUTSIDE_MEM;
@@ -2177,6 +2241,7 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	POSTPONE(ctx) = 0;
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
+	ctx->fp = 0;
 	HERE(ctx) = (zf_addr)len;
 
 	if((size_t)HERE(ctx) > dict_capacity(ctx)) {

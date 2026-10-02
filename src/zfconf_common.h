@@ -152,7 +152,9 @@ typedef ZF_ADDR_TYPE zf_addr;
 
 /* Memory region sizes: dictionary size is given in bytes, stack sizes are
  * number of elements of type zf_cell. ZF_DICT_SIZE is the fixed dictionary
- * size when ZF_ENABLE_DYNAMIC_DICT is 0. */
+ * size when ZF_ENABLE_DYNAMIC_DICT is 0. The return stack also holds local
+ * variable frames: each call with n locals uses n + 3 entries (return
+ * address, two frame header entries, the locals). */
 #ifndef ZF_DICT_SIZE
 #define ZF_DICT_SIZE 4096
 #endif
