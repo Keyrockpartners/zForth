@@ -1,0 +1,5 @@
+[led on]
+adc average 301.50
+uptime is a number: true
+[led off]
+inline forth: 10

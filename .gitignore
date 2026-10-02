@@ -12,3 +12,4 @@ openspec
 zforth_dict.h
 .direnv
 tests/build
+/build

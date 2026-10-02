@@ -1,0 +1,56 @@
+// Strings: escapes and UTF-8, len, comparison, indexing, iterating over
+// runes, formatting into a byte array, and string views of byte slices.
+package main
+
+import "dev"
+
+const greeting = "héllo, wörld"
+
+var buf [64]byte
+
+func countRunes(s string) (bytes, runes int) {
+	for range s {
+		runes++
+	}
+	return len(s), runes
+}
+
+func upper(s string) int {
+	n := copy(buf[:], s)
+	for i := 0; i < n; i++ {
+		if c := buf[i]; c >= 'a' && c <= 'z' {
+			buf[i] = c - 'a' + 'A'
+		}
+	}
+	return n
+}
+
+func main() {
+	dev.Printf("%s\n", greeting)
+	b, r := countRunes(greeting)
+	dev.Printf("%d bytes, %d runes\n", b, r)
+	for i, c := range "aé€😀" {
+		dev.Printf("%d:%d ", i, c)
+	}
+	dev.Printf("\n")
+	dev.Printf("tab[\t] quote[\"] backslash[\\] hex[\x41] unicode[é]\n")
+
+	s := "sensor"
+	dev.Printf("%v %v %v %v\n", s == "sensor", s != "sensor", s < "sensors", "b" > "abc")
+	dev.Printf("s[0]=%c s[5]=%c len=%d sub=%s\n", s[0], s[5], len(s), s[1:4])
+
+	n := dev.Format(buf[:], "temp=%.1f id=%d ok=%t", float32(21.5), 7, true)
+	msg := string(buf[:n])
+	dev.Printf("formatted %d bytes: %s\n", n, msg)
+	small := buf[:8]
+	n = dev.Format(small, "%s", "truncated output")
+	dev.Printf("into 8 bytes: %s (%d)\n", string(small[:n]), n)
+
+	n = upper("Hello, World")
+	dev.Printf("%s\n", string(buf[:n]))
+	view := string(buf[:5])
+	buf[0] = 'J'
+	dev.Printf("the view changes with the buffer: %s\n", view)
+
+	dev.Printf("[%5s] [%-5s] [%.2s]\n", "ab", "cd", "efgh")
+}

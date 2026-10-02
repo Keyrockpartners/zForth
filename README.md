@@ -4,6 +4,12 @@
 zForth
 ======
 
+> **This fork** adds **ZGo**, a strict subset of Go that compiles to zForth,
+> for device scripts and firmware: see [LANGUAGE.md](LANGUAGE.md) for the
+> language, [examples/](examples/) for programs, and
+> [ZGO_PLAN.md](ZGO_PLAN.md) for the design. `make zgoc` builds the
+> compiler; `build/zgoc run examples/hello/main.zgo` runs a program.
+
 
 From Wikipedia:
 

@@ -1,0 +1,72 @@
+package main
+
+import "dev"
+
+func kind(s string) int {
+	switch s {
+	case "temp", "humidity":
+		return 1
+	case "":
+		return 0
+	default:
+		return -1
+	case "button":
+		return 2
+	}
+}
+
+func flags(on, warn bool) string {
+	switch on {
+	case true:
+		if warn {
+			return "on+warn"
+		}
+		return "on"
+	}
+	return "off"
+}
+
+func ranges(x int32) {
+	switch {
+	default:
+		dev.Printf("big ")
+	case x < 0:
+		dev.Printf("neg ")
+		fallthrough
+	case x < 10:
+		dev.Printf("small ")
+	case x < 100:
+		dev.Printf("medium ")
+		fallthrough
+	case x == 1000:
+		dev.Printf("(fell) ")
+	}
+}
+
+func main() {
+	dev.Printf("%d %d %d %d\n", kind("temp"), kind(""), kind("x"), kind("button"))
+	dev.Printf("%s %s %s\n", flags(true, true), flags(true, false), flags(false, true))
+	for _, x := range []int32{-5, 3, 50, 500} {
+		ranges(x)
+	}
+	dev.Printf("\n")
+	var u8 uint8 = 200
+	switch u8 {
+	case 200:
+		dev.Printf("u8 200\n")
+	}
+	var big int64 = 1 << 40
+	switch big {
+	case 1 << 40:
+		dev.Printf("int64 matched\n")
+	}
+	f := float32(2.5)
+	switch f {
+	case 2.5:
+		dev.Printf("float matched\n")
+	}
+	switch x := 5; x {
+	}
+	switch {
+	}
+}

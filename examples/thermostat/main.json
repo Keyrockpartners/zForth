@@ -1,0 +1,74 @@
+{
+  "init": "z-init",
+  "main": "z-main",
+  "exports": [
+    {
+      "name": "OnReading",
+      "word": "z-OnReading",
+      "params": [
+        {
+          "name": "temp",
+          "type": "float32",
+          "cells": 1
+        },
+        {
+          "name": "ts",
+          "type": "uint64",
+          "cells": 2
+        }
+      ],
+      "results": []
+    },
+    {
+      "name": "OnTick",
+      "word": "z-OnTick",
+      "params": [
+        {
+          "name": "now",
+          "type": "uint64",
+          "cells": 2
+        }
+      ],
+      "results": []
+    },
+    {
+      "name": "SetSetpoint",
+      "word": "z-SetSetpoint",
+      "params": [
+        {
+          "name": "sp",
+          "type": "float32",
+          "cells": 1
+        }
+      ],
+      "results": [
+        {
+          "type": "bool",
+          "cells": 1
+        }
+      ]
+    },
+    {
+      "name": "Reset",
+      "word": "z-Reset",
+      "params": [],
+      "results": []
+    },
+    {
+      "name": "Status",
+      "word": "z-Status",
+      "params": [],
+      "results": [
+        {
+          "type": "State",
+          "cells": 1
+        },
+        {
+          "type": "uint32",
+          "cells": 1
+        }
+      ]
+    }
+  ],
+  "vars": []
+}

@@ -1,0 +1,42 @@
+package main
+
+import "dev"
+
+type Mode uint8
+
+const (
+	Off Mode = iota
+	Low
+	High
+	_
+	Max
+)
+
+const (
+	KB = 1 << (10 * (iota + 1))
+	MB
+	GB
+)
+
+const pi = 3.14159265358979323846
+const big = 1 << 100
+const greeting = "hi" + " " + "there"
+
+func main() {
+	dev.Printf("%d %d %d %d\n", Off, Low, High, Max)
+	dev.Printf("%d %d %d\n", KB, MB, GB)
+	var f32 float32 = pi
+	f64 := pi
+	dev.Printf("%.7f %.15f\n", f32, f64)
+	dev.Printf("%d\n", big>>98)
+	dev.Printf("%s %d\n", greeting, len(greeting))
+	var m Mode = High
+	m++
+	dev.Printf("%d %v\n", m, m > Low)
+	const c = 'x' - 'a'
+	dev.Printf("%d %c\n", c, 'a'+c)
+	var u uint32 = 1<<32 - 1
+	var i int64 = -1 << 63
+	dev.Printf("%d %d\n", u, i)
+	dev.Printf("%.2f\n", float32(1)/3*3)
+}

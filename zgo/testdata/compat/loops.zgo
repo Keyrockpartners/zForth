@@ -1,0 +1,84 @@
+package main
+
+import "dev"
+
+type Cell struct {
+	Alive bool
+	Age   uint8
+}
+
+var board [5]Cell
+var counts [3]int32
+
+func main() {
+	board[1].Alive = true
+	board[3].Alive = true
+	for gen := 0; gen < 3; gen++ {
+		for i := range board {
+			c := &board[i]
+			if c.Alive {
+				c.Age++
+			}
+			if i > 0 && board[i-1].Alive && !c.Alive {
+				c.Alive = true
+			}
+		}
+	}
+	for i, c := range board {
+		dev.Printf("%d:%v:%d ", i, c.Alive, c.Age)
+	}
+	dev.Printf("\n")
+
+	var i int
+	var v int32
+	for i = range counts {
+		counts[i] = int32(i * i)
+	}
+	dev.Printf("after loop i=%d\n", i)
+	for _, v = range counts {
+	}
+	dev.Printf("last v=%d\n", v)
+
+outer:
+	for _, row := range [3]int32{1, 2, 3} {
+		for k := range 5 {
+			switch {
+			case k == 1:
+				continue
+			case int32(k) > row:
+				continue outer
+			case row == 3 && k == 2:
+				break outer
+			}
+			dev.Printf("%d.%d ", row, k)
+		}
+	}
+	dev.Printf("\n")
+
+	n := 0
+	for {
+		n++
+		switch n {
+		case 2:
+			continue
+		case 5:
+		}
+		if n >= 5 {
+			break
+		}
+		dev.Printf("n%d ", n)
+	}
+	dev.Printf("\n")
+	sum := int64(0)
+	for k := int64(0); k < 5; k++ {
+		sum += k * 1000000000
+	}
+	dev.Printf("%d\n", sum)
+	for k := range int64(3) {
+		dev.Printf("%d ", k)
+	}
+	for k := range uint8(3) {
+		dev.Printf("%d ", k)
+	}
+	dev.Printf("\n")
+}

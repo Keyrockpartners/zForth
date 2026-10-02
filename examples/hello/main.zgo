@@ -1,0 +1,8 @@
+// The smallest ZGo program: print a line from main.
+package main
+
+import "dev"
+
+func main() {
+	dev.Printf("hello from ZGo: %d\n", 42)
+}

@@ -1,0 +1,7 @@
+package main
+
+func missing(x int) int // ERROR "has no body: bind it to a zForth word with a //zf:forth comment"
+
+func main() {
+	missing(1)
+}

@@ -1,0 +1,55 @@
+package main
+
+import "dev"
+
+type Celsius float32
+
+func (c Celsius) F() float32 { return float32(c)*9/5 + 32 }
+
+type Counter uint32
+
+func (c *Counter) Inc() { *c++ }
+func (c Counter) Get() uint32 { return uint32(c) }
+
+type Vec struct{ X, Y float32 }
+
+func (v Vec) Dot(w Vec) float32    { return v.X*w.X + v.Y*w.Y }
+func (v *Vec) Scale(k float32)     { v.X *= k; v.Y *= k }
+func (v *Vec) Add(w *Vec) *Vec     { v.X += w.X; v.Y += w.Y; return v }
+func (v Vec) Len2() float32        { return v.Dot(v) }
+
+type Box struct {
+	Min, Max Vec
+	Hits     Counter
+}
+
+func (b *Box) Contains(p Vec) bool {
+	b.Hits.Inc()
+	return p.X >= b.Min.X && p.X <= b.Max.X && p.Y >= b.Min.Y && p.Y <= b.Max.Y
+}
+
+var hits Counter
+var box = Box{Min: Vec{0, 0}, Max: Vec{10, 5}}
+
+func main() {
+	var t Celsius = 100
+	dev.Printf("%.1f %.1f\n", t.F(), Celsius(-40).F())
+	hits.Inc()
+	hits.Inc()
+	dev.Printf("hits %d\n", hits.Get())
+	v := Vec{3, 4}
+	w := Vec{1, 2}
+	dev.Printf("dot %.1f len2 %.1f\n", v.Dot(w), v.Len2())
+	v.Scale(2)
+	v.Add(&w).Add(&w)
+	dev.Printf("v %.1f %.1f\n", v.X, v.Y)
+	pv := &v
+	dev.Printf("via pointer %.1f\n", pv.Len2())
+	for _, p := range [3]Vec{{1, 1}, {11, 1}, {5, 5}} {
+		dev.Printf("%v ", box.Contains(p))
+	}
+	dev.Printf("box hits %d\n", box.Hits.Get())
+	pc := &hits
+	pc.Inc()
+	dev.Printf("%d %d\n", pc.Get(), hits)
+}

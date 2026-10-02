@@ -1,0 +1,76 @@
+package main
+
+import "dev"
+
+type node struct{ v int32 }
+type pt struct {
+	x, y int32
+	tag  string
+}
+
+var (
+	n1, n2 node
+	items  [3]pt
+	mat    [2][3]int32
+	calls  int32
+)
+
+func f() int {
+	calls++
+	return 1
+}
+
+func getP() *[4]int32 {
+	calls++
+	return &[4]int32{}
+}
+
+func sumP(p *[4]int32) (s int32) {
+	for i, v := range p {
+		s += v * int32(i)
+	}
+	return
+}
+
+func main() {
+	// left-hand index operands and pointers are evaluated first
+	var a [3]int32
+	i := 0
+	a[i], i = 9, 2
+	dev.Printf("%d %d %d i=%d\n", a[0], a[1], a[2], i)
+	p := &n1
+	p.v, p = 7, &n2
+	dev.Printf("%d %d\n", n1.v, n2.v)
+	s := a[:]
+	s[1], s = 4, s[2:]
+	dev.Printf("%d %d %d len %d\n", a[0], a[1], a[2], len(s))
+	b := [2]int32{5, 6}
+	j := 0
+	b[j], b[j+1], j = b[j+1], b[j], 1
+	dev.Printf("%d %d j=%d\n", b[0], b[1], j)
+
+	// swapping arrays and structs copies them
+	x := [2]int32{1, 2}
+	y := [2]int32{3, 4}
+	x, y = y, x
+	dev.Printf("%d %d %d %d\n", x[0], x[1], y[0], y[1])
+	items[0] = pt{1, 2, "a"}
+	items[2] = pt{5, 6, "c"}
+	items[0], items[2] = items[2], items[0]
+	dev.Printf("%d %s %d %s\n", items[0].x, items[0].tag, items[2].y, items[2].tag)
+	pp, qq := &items[0], &items[1]
+	*pp, *qq = *qq, *pp
+	dev.Printf("%d %s %d %s\n", items[0].x, items[0].tag, items[1].x, items[1].tag)
+
+	// 64-bit integers to float32 round once
+	var big int64 = 1<<60 + 1<<36 + 1
+	var ubig uint64 = 1<<63 + 1<<39 + 1
+	dev.Printf("%.1f %.1f\n", float32(big), float32(ubig))
+
+	// len and cap still evaluate calls in their operand
+	dev.Printf("%d %d %d calls=%d\n", len(mat[f()]), cap(mat[f()]), len(getP()), calls)
+
+	// range over a pointer to an array
+	q := &[4]int32{1, 2, 3, 4}
+	dev.Printf("%d\n", sumP(q))
+}

@@ -1,0 +1,8 @@
+fib(20) = 6765
+20! = 2432902008176640000
+47 = 5*9 + 2
+lo -5 hi 9 mean 2.667
+empty: 0 0 0.0
+isEven(10) true, isOdd(7) true, isEven(7) false
+first negative at 1, none at -1
+gcd = 21

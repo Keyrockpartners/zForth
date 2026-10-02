@@ -1,0 +1,130 @@
+// A thermostat with hysteresis, written the way device scripts are: the
+// firmware calls the exported handlers, and the script drives a relay and
+// publishes JSON status messages through host words (host.zf has Linux
+// stand-ins; calls.txt plays the firmware).
+package main
+
+import "dev"
+
+//zf:forth relay-set
+func relaySet(on bool)
+
+//zf:forth publish
+func publish(topic string, payload []byte)
+
+type State uint8
+
+const (
+	Idle State = iota
+	Heating
+	Fault
+)
+
+var stateNames = [...]string{"idle", "heating", "fault"}
+
+type Config struct {
+	Setpoint   float32
+	Hysteresis float32
+	MaxTemp    float32
+	StaleMs    uint64
+}
+
+var cfg = Config{Setpoint: 21, Hysteresis: 0.5, MaxTemp: 35, StaleMs: 120000}
+
+type Thermostat struct {
+	State    State
+	Temp     float32
+	LastSeen uint64
+	Switches uint32
+	history  [8]float32
+	n        int
+}
+
+var (
+	th  Thermostat
+	msg [128]byte
+)
+
+func (t *Thermostat) record(v float32) {
+	t.history[t.n%len(t.history)] = v
+	t.n++
+}
+
+func (t *Thermostat) average() float32 {
+	count := min(t.n, len(t.history))
+	if count == 0 {
+		return 0
+	}
+	var sum float32
+	for _, v := range t.history[:count] {
+		sum += v
+	}
+	return sum / float32(count)
+}
+
+func (t *Thermostat) setState(s State) {
+	if s == t.State {
+		return
+	}
+	dev.Printf("state %s -> %s\n", stateNames[t.State], stateNames[s])
+	t.State = s
+	relaySet(s == Heating)
+	t.Switches++
+}
+
+func (t *Thermostat) report(ts uint64) {
+	n := dev.Format(msg[:], `{"state":"%s","temp":%.2f,"avg":%.2f,"setpoint":%.1f,"ts":%d}`,
+		stateNames[t.State], t.Temp, t.average(), cfg.Setpoint, ts)
+	publish("thermostat/status", msg[:n])
+}
+
+// OnReading is called by the firmware for each temperature reading.
+func OnReading(temp float32, ts uint64) {
+	th.Temp = temp
+	th.LastSeen = ts
+	th.record(temp)
+	switch {
+	case temp > cfg.MaxTemp:
+		th.setState(Fault)
+	case th.State == Fault:
+		// stays in fault until Reset
+	case temp < cfg.Setpoint-cfg.Hysteresis:
+		th.setState(Heating)
+	case temp > cfg.Setpoint+cfg.Hysteresis:
+		th.setState(Idle)
+	}
+	th.report(ts)
+}
+
+// OnTick is called periodically and checks that readings keep coming.
+func OnTick(now uint64) {
+	if th.State != Fault && th.LastSeen != 0 && now-th.LastSeen > cfg.StaleMs {
+		dev.Printf("no reading for %d s\n", (now-th.LastSeen)/1000)
+		th.setState(Fault)
+	}
+}
+
+// SetSetpoint changes the target temperature; values outside 5..30 are
+// rejected.
+func SetSetpoint(sp float32) bool {
+	if sp < 5 || sp > 30 {
+		return false
+	}
+	cfg.Setpoint = sp
+	return true
+}
+
+// Reset leaves the fault state.
+func Reset() {
+	if th.State == Fault {
+		th.setState(Idle)
+	}
+}
+
+// Status returns the state and the number of relay switches.
+func Status() (State, uint32) { return th.State, th.Switches }
+
+func init() {
+	relaySet(false)
+	dev.Printf("thermostat ready, setpoint %.1f\n", cfg.Setpoint)
+}

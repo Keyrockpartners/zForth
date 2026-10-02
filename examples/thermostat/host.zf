@@ -1,0 +1,3 @@
+( Linux stand-ins for the thermostat's host words )
+: relay-set ( f -- ) ." [relay " if ." on" else ." off" fi ." ]" cr ;
+: publish ( topic len payload len -- ) 2swap ." [" tell ." ] " tell cr ;

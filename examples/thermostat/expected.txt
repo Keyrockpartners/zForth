@@ -1,0 +1,26 @@
+[relay off]
+thermostat ready, setpoint 21.0
+state idle -> heating
+[relay on]
+[thermostat/status] {"state":"heating","temp":20.00,"avg":20.00,"setpoint":21.0,"ts":1000}
+[thermostat/status] {"state":"heating","temp":20.40,"avg":20.20,"setpoint":21.0,"ts":61000}
+state heating -> idle
+[relay off]
+[thermostat/status] {"state":"idle","temp":21.60,"avg":20.67,"setpoint":21.0,"ts":121000}
+state idle -> heating
+[relay on]
+[thermostat/status] {"state":"heating","temp":19.00,"avg":20.25,"setpoint":21.0,"ts":181000}
+no reading for 219 s
+state heating -> fault
+[relay off]
+4 2 
+state fault -> idle
+[relay off]
+-1 0 
+state idle -> heating
+[relay on]
+[thermostat/status] {"state":"heating","temp":22.00,"avg":20.60,"setpoint":23.0,"ts":420000}
+state heating -> fault
+[relay off]
+[thermostat/status] {"state":"fault","temp":36.00,"avg":23.17,"setpoint":23.0,"ts":480000}
+7 2 

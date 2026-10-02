@@ -1,0 +1,30 @@
+// Package dev is the ZGo device API: the functions a ZGo program can call on
+// any BlueStreak device. Functions without a body are bound to zForth words
+// with a //zf:forth directive; Printf and Format are built into the compiler,
+// which rewrites their format strings at compile time.
+package dev
+
+// Printf prints formatted output, like fmt.Printf. The format must be a
+// constant. Supported verbs: %d %x %X %c %f %e %E %g %G %s %v %t %%, with
+// flags, width and precision. See LANGUAGE.md for the differences from Go.
+func Printf(format string, args ...any)
+
+// Format formats into buf, like fmt.Sprintf without allocating, and returns
+// the number of bytes written. Output that does not fit is cut off. Use
+// string(buf[:n]) to get the result as a string.
+func Format(buf []byte, format string, args ...any) int
+
+// Print prints a string as is.
+//
+//zf:forth tell
+func Print(s string)
+
+// Delay waits ms milliseconds.
+//
+//zf:forth ms
+func Delay(ms uint32)
+
+// Millis returns the milliseconds since the device started.
+//
+//zf:forth millis
+func Millis() uint64

@@ -1,0 +1,63 @@
+package main
+
+import "dev"
+
+var x = 1
+
+func shadow() {
+	dev.Printf("global x=%d\n", x)
+	x := 2
+	{
+		x := 3
+		x++
+		dev.Printf("inner x=%d\n", x)
+	}
+	if x := 10; x > 5 {
+		dev.Printf("if x=%d\n", x)
+	} else if y := x * 2; y > 0 {
+		dev.Printf("never %d\n", y)
+	}
+	switch x := 20; {
+	case x > 10:
+		dev.Printf("switch x=%d\n", x)
+	}
+	for x := 0; x < 2; x++ {
+		dev.Printf("loop x=%d ", x)
+	}
+	dev.Printf("\nlocal x=%d\n", x)
+}
+
+func siblings() int32 {
+	var total int32
+	{
+		a, b := int32(1), int32(2)
+		total += a + b
+	}
+	{
+		c := int64(100)
+		d := float32(0.5)
+		total += int32(c) + int32(d*4)
+	}
+	{
+		e := int32(7)
+		total *= e
+	}
+	return total
+}
+
+func redeclare() (int32, error2) {
+	a, err := int32(1), error2(0)
+	b, err := int32(2), error2(5)
+	return a + b, err
+}
+
+type error2 int32
+
+func main() {
+	shadow()
+	dev.Printf("siblings %d\n", siblings())
+	v, e := redeclare()
+	dev.Printf("redeclare %d %d\n", v, e)
+	x = 7
+	dev.Printf("global now %d\n", x)
+}

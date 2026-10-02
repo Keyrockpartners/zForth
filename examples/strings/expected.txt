@@ -1,0 +1,11 @@
+héllo, wörld
+14 bytes, 12 runes
+0:97 1:233 3:8364 6:128512 
+tab[	] quote["] backslash[\] hex[A] unicode[é]
+true false true true
+s[0]=s s[5]=r len=6 sub=ens
+formatted 22 bytes: temp=21.5 id=7 ok=true
+into 8 bytes: truncate (8)
+HELLO, WORLD
+the view changes with the buffer: JELLO
+[   ab] [cd   ] [ef]

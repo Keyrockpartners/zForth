@@ -1,0 +1,11 @@
+1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz
+a:vowel x:other 7:digit  :space 
+A A B F
+n=6 k=7
+sum 0..9 = 45
+found 76
+count 4
+zero small 
+small 
+two any
+any

@@ -1,0 +1,20 @@
+package main
+
+import "dev"
+
+var buf [16]byte
+
+func main() {
+	f := "%d\n"
+	dev.Printf(f, 1)                      // ERROR "format strings must be constants"
+	dev.Printf("%q\n", "x")               // ERROR "format verb %q is not supported"
+	dev.Printf("%d\n", "text")            // ERROR "format %d does not take string"
+	dev.Printf("%s\n", 42)                // ERROR "format %s does not take int"
+	dev.Printf("%d %d\n", 1)              // ERROR "format %d has no matching argument"
+	dev.Printf("%d\n", 1, 2)              // ERROR "too many arguments for format"
+	dev.Printf("%*d\n", 3, 4)             // ERROR "* widths are not supported"
+	dev.Printf("%t\n", 1)                 // ERROR "format %t does not take int"
+	dev.Format(buf[:], "%b", 5)           // ERROR "format verb %b is not supported"
+	var l int64
+	dev.Printf("%d %d %d %d %d %d %d %d %d\n", l, l, l, l, l, l, l, l, l) // ERROR "more than the 16 one call can print"
+}

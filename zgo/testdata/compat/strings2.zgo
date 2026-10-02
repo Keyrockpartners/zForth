@@ -1,0 +1,63 @@
+package main
+
+import "dev"
+
+type Named struct {
+	Name string
+	Tags [2]string
+}
+
+var names = [4]string{"delta", "alpha", "charlie", "bravo"}
+var item = Named{Name: "pump", Tags: [2]string{"water", "main"}}
+
+func sortNames() {
+	for i := 1; i < len(names); i++ {
+		for j := i; j > 0 && names[j] < names[j-1]; j-- {
+			names[j], names[j-1] = names[j-1], names[j]
+		}
+	}
+}
+
+func longest(xs []string) (string, int) {
+	best := ""
+	for _, s := range xs {
+		if len(s) > len(best) {
+			best = s
+		}
+	}
+	return best, len(best)
+}
+
+func countByte(s string, c byte) (n int) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			n++
+		}
+	}
+	return
+}
+
+func main() {
+	sortNames()
+	dev.Printf("%s %s %s %s\n", names[0], names[1], names[2], names[3])
+	s, n := longest(names[:])
+	dev.Printf("%s %d\n", s, n)
+	dev.Printf("%d\n", countByte("banana", 'a'))
+	dev.Printf("%s/%s/%s\n", item.Name, item.Tags[0], item.Tags[1])
+	item.Tags[1] = "backup"
+	dev.Printf("%s %v\n", item.Tags[1], item.Tags[0] == "water")
+	bad := "a\xffb\xe2\x82"
+	for i, r := range bad {
+		dev.Printf("%d:%x ", i, r)
+	}
+	dev.Printf("\n")
+	for i := range "héllo" {
+		dev.Printf("%d ", i)
+	}
+	dev.Printf("\n")
+	str := "hello, world"
+	dev.Printf("%s|%s|%s|%d\n", str[:5], str[7:], str[3:3], len(str[2:9]))
+	dev.Printf("%v %v %v %v\n", "abc" < "abd", "abc" < "ab", "" < "a", "Z" < "a")
+	var empty string
+	dev.Printf("[%s] %d %v\n", empty, len(empty), empty == "")
+}

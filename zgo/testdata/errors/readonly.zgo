@@ -1,0 +1,29 @@
+package main
+
+type P struct{ x int32 }
+
+func (p *P) set() { p.x = 9 }
+
+func (p P) bad() int32 {
+	p.set() // ERROR "a value receiver is read-only"
+	return p.x
+}
+
+type S struct{ in P }
+
+func f(a S) int32 {
+	a.in.set() // ERROR "struct parameters are read-only"
+	return a.in.x
+}
+
+type Count int32
+
+func (c *Count) Inc() { *c++ }
+
+func main() {
+	var g P
+	g.bad()
+	f(S{})
+	var n Count
+	n.Inc() // ERROR "cannot take the address of local variable n"
+}

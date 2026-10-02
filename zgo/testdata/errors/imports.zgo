@@ -1,0 +1,10 @@
+package main
+
+import (
+	"fmt"     // ERROR "package fmt is not available: use dev.Printf"
+	"strings" // ERROR "can only import \"dev\""
+)
+
+func main() {
+	fmt.Println(strings.ToUpper("x"))
+}

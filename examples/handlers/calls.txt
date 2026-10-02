@@ -1,0 +1,7 @@
+21.5e0 1700000000000. z-OnTemperature
+22.0e0 1700000060000. z-OnTemperature
+1 z-OnButton drop 1 z-OnButton drop 1 z-OnButton . cr
+7 z-OnButton . cr
+25.0e0 z-SetAlarm f. cr
+26.0e0 1700000090000. z-OnTemperature
+z-Presses 2 + @u16 . cr

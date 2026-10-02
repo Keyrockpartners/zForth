@@ -1,0 +1,93 @@
+// Every numeric type: wraparound, division, narrow types, 64-bit
+// timestamps, shifts, float32 versus float64, and conversions.
+package main
+
+import "dev"
+
+func ints() {
+	var a int32 = 2147483647
+	a++
+	var u uint32
+	u--
+	dev.Printf("int32 max+1 = %d, uint32 0-1 = %d\n", a, u)
+
+	x, y := int32(-7), int32(2)
+	dev.Printf("%d / %d = %d, %d %% %d = %d\n", x, y, x/y, x, y, x%y)
+	minI := int32(-2147483648)
+	m1 := int32(-1)
+	dev.Printf("min / -1 = %d, min %% -1 = %d\n", minI/m1, minI%m1)
+
+	var b uint8 = 250
+	b += 10
+	var s8 int8 = 127
+	s8++
+	var i16 int16 = -32768
+	i16--
+	var u16 uint16 = 65535
+	u16 *= 2
+	dev.Printf("uint8 %d, int8 %d, int16 %d, uint16 %d\n", b, s8, i16, u16)
+	var d8 int8 = -128
+	d8 /= -1
+	nb := ^b
+	dev.Printf("int8 -128/-1 = %d, ^uint8(4) = %d, -uint8(4) = %d\n", d8, nb, -b)
+
+	var one uint32 = 1
+	n := uint32(31)
+	dev.Printf("1<<31 = %d, 1<<32 = %d, -16>>2 = %d\n", one<<n, one<<(n+1), int32(-16)>>2)
+	dev.Printf("0xF0F0 &^ 0xFF00 = %#x, 6|9 = %d, 6^3 = %d\n", uint32(0xF0F0)&^0xFF00, 6|int32(9), int32(6)^3)
+}
+
+func longs() {
+	var ts uint64 = 1700000000000
+	ts += 86400000
+	dev.Printf("timestamp + 1 day = %d\n", ts)
+	var lo int64 = -9223372036854775808
+	lo--
+	dev.Printf("int64 min-1 = %d\n", lo)
+	var m int64 = 123456789
+	dev.Printf("m*m = %d, /7 = %d, %%7 = %d, -m*m/7 = %d\n", m*m, m*m/7, m*m%7, -m*m/7)
+	var um uint64 = 18446744073709551615
+	dev.Printf("max uint64 = %d, /3 = %d, >>4 = %x\n", um, um/3, um>>4)
+	sh := uint(40)
+	var neg int64 = -1024
+	dev.Printf("1<<40|0xff = %d, -1024>>3 = %d, -1024<<20 = %d\n", uint64(1)<<sh|0xff, neg>>3, neg<<20)
+	dev.Printf("%d %d %v\n", m&0xFFFF, m^-1, m < -m)
+}
+
+func floats() {
+	var f32 float32 = 0.1
+	f64 := 0.1
+	dev.Printf("float32 0.1 = %.10f, float64 0.1 = %.17f\n", f32, f64)
+	sum32, sum64 := float32(0), 0.0
+	for i := 0; i < 10; i++ {
+		sum32 += f32
+		sum64 += f64
+	}
+	dev.Printf("ten additions: %.8f %.17f\n", sum32, sum64)
+	dev.Printf("%.3e %e %.2f %g\n", float32(12345.678), 1e21, -f64*25, float32(2.5))
+	c := float32(37.5)
+	dev.Printf("%.1f C = %.1f F\n", c, c*9/5+32)
+	dev.Printf("%v %v %v\n", f32 < 0.2, sum64 == 1.0, sum64 > 0.99)
+}
+
+func conversions() {
+	fv := float32(-3.99)
+	big := 3000000000.0
+	huge := 1e15
+	i := int32(200)
+	neg := int32(-1)
+	var max64 uint64 = 18446744073709551615
+	dev.Printf("int32(-3.99) = %d, uint32(3e9) = %d, int64(1e15) = %d\n", int32(fv), uint32(big), int64(huge))
+	dev.Printf("int8(200) = %d, uint16(-1) = %d, uint8(-1) = %d\n", int8(i), uint16(neg), uint8(neg))
+	dev.Printf("float64(max uint64) = %.0f, uint64(1.5e19) = %d\n", float64(max64), uint64(big*5e9))
+	dev.Printf("int64(int32 -5) = %d, uint64(uint32 max) = %d, int32(int64) = %d\n", int64(neg)*5, uint64(uint32(neg)), int32(int64(neg)<<33+7))
+	dev.Printf("float32(1/3) = %.9f, float64 = %.17f\n", float32(1)/3, float64(1)/3)
+	dev.Printf("%c%c %x %X %08x %d\n", 'Z', rune(103), 255, 3054, 48879, min(i, 3, neg))
+}
+
+func main() {
+	ints()
+	longs()
+	floats()
+	conversions()
+}

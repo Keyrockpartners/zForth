@@ -1,0 +1,34 @@
+// Binding host words: functions without a body call the zForth word named
+// by their //zf:forth comment. host.zf has Linux stand-ins for them; on a
+// device the firmware provides the real words.
+package main
+
+import "dev"
+
+//zf:forth led-set
+func LedSet(on bool)
+
+//zf:forth adc-read
+func adcRead(channel uint8) uint16
+
+// The directive can be any Forth text, here an inline expression
+//
+//zf:forth + 2 *
+func sumTwice(a, b int32) int32
+
+func average(ch uint8, n int) float32 {
+	var sum uint32
+	for range n {
+		sum += uint32(adcRead(ch))
+	}
+	return float32(sum) / float32(n)
+}
+
+func main() {
+	LedSet(true)
+	dev.Printf("adc average %.2f\n", average(3, 4))
+	dev.Printf("uptime is a number: %v\n", dev.Millis() < 1000000)
+	dev.Delay(1)
+	LedSet(false)
+	dev.Printf("inline forth: %d\n", sumTwice(2, 3))
+}

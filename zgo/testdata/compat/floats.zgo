@@ -1,0 +1,38 @@
+package main
+
+import "dev"
+
+func div32(a, b float32) float32 { return a / b }
+func div64(a, b float64) float64 { return a / b }
+
+func main() {
+	zero32 := float32(0)
+	nan32 := div32(zero32, zero32)
+	inf32 := div32(1, zero32)
+	zero64 := 0.0
+	nan64 := div64(zero64, zero64)
+	inf64 := div64(-1, zero64)
+	dev.Printf("%v %v %v %v\n", nan32 == nan32, nan32 != nan32, nan32 < 1, nan32 >= 1)
+	dev.Printf("%v %v %v %v\n", nan64 == nan64, nan64 != nan64, nan64 > 0, nan64 <= 0)
+	dev.Printf("%v %v %v\n", inf32 > 1e38, inf64 < -1e300, -inf32 < 0)
+	dev.Printf("%.3f %.3f\n", float32(-2.5)*1.5, 7.0/3.0)
+	p29, m29, e10, f250 := float32(2.9), float32(-2.9), -1e10, float32(250.7)
+	dev.Printf("%d %d %d %d\n", int32(p29), int32(m29), int64(e10), uint8(f250))
+	var f float32 = 16777216
+	f++
+	dev.Printf("%.1f\n", f)
+	var d float64 = 16777216
+	d++
+	dev.Printf("%.1f\n", d)
+	sum := float32(0)
+	for i := 1; i <= 100; i++ {
+		sum += 1 / float32(i)
+	}
+	dev.Printf("harmonic %.6f\n", sum)
+	dev.Printf("%e %E %.2g %G\n", 123456.0, float32(0.000123), 1234.5, 1e-7)
+	dev.Printf("%8.3f|%-8.2f|%+.1f|%08.2f\n", 3.14159, float32(2.5), 1.0, -1.5)
+	var h float64 = 1 << 62
+	dev.Printf("%.0f %d\n", h, int64(h))
+	m := min(float32(3), 1.5, 2)
+	dev.Printf("%.1f %.1f\n", m, max(1.5, 2.5, -1))
+}

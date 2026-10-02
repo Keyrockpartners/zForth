@@ -1,0 +1,17 @@
+package main
+
+func worker() {}
+
+func main() {
+	go worker()          // ERROR "goroutines and channels are not supported"
+	var c chan int       // ERROR "goroutines and channels are not supported"
+	select {}            // ERROR "goroutines and channels are not supported"
+	defer worker()       // ERROR "defer is not supported"
+	m := map[string]int{} // ERROR "maps are not supported"
+	f := func() {}       // ERROR "closures and function values are not supported"
+	var g func()         // ERROR "closures and function values are not supported"
+	var i interface{}    // ERROR "interfaces are not supported"
+	goto end             // ERROR "goto is not supported"
+end:                     // ERROR "labels are only supported on for and switch"
+	_ = c
+}

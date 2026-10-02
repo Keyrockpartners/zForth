@@ -1,0 +1,19 @@
+package main
+
+var buf [8]int
+
+func main() {
+	s := buf[:]
+	s = append(s, 1)      // ERROR "append: no dynamic allocation"
+	t := make([]int, 4)   // ERROR "make: no dynamic allocation"
+	p := new(int)         // ERROR "new: no dynamic allocation"
+	n := cap(s)           // ERROR "cap of a slice is not supported"
+	a := "x"
+	b := a + "y"          // ERROR "string concatenation allocates: use dev.Format"
+	a += b                // ERROR "string concatenation allocates"
+	r := string(rune(n))  // ERROR "string(rune) is not supported"
+	bs := []byte(a)       // ERROR "converting a string to a slice allocates"
+	_ = recover()         // ERROR "recover is not supported"
+	var z complex64       // ERROR "complex numbers are not supported"
+	_, _, _, _, _ = t, p, r, bs, z
+}

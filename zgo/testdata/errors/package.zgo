@@ -1,0 +1,3 @@
+package sensors // ERROR "ZGo programs must be package main"
+
+func Read() int { return 0 }

@@ -1,0 +1,50 @@
+package main
+
+import "dev"
+
+func main() {
+	var u8 uint8 = 200
+	var s8 int8 = 100
+	var u16 uint16 = 60000
+	var s16 int16 = 30000
+	for i := 0; i < 3; i++ {
+		u8 += 30
+		s8 += 20
+		u16 += 3000
+		s16 += 2000
+		dev.Printf("%d %d %d %d\n", u8, s8, u16, s16)
+	}
+	u8 = 3
+	u8 -= 5
+	s8 = -100
+	s8 -= 50
+	dev.Printf("%d %d\n", u8, s8)
+	u8 = 16
+	u8 *= 17
+	s8 = 16
+	s8 *= 9
+	dev.Printf("%d %d\n", u8, s8)
+	u8 = 0x81
+	dev.Printf("%d %d %d %d\n", u8<<1, u8>>1, ^u8, -u8)
+	s8 = -128
+	dev.Printf("%d %d %d %d\n", s8>>1, s8<<1, ^s8, -s8)
+	s16 = -32768
+	dev.Printf("%d %d %d\n", s16/-1, s16%-1, -s16)
+	var b uint8 = 255
+	var c int8 = int8(b)
+	var w uint16 = uint16(c)
+	var d int16 = int16(w)
+	dev.Printf("%d %d %d %d\n", b, c, w, d)
+	dev.Printf("%v %v %v\n", c < 0, b > 254, uint8(c) == b)
+	total := 0
+	for x := uint8(250); x != 4; x++ {
+		total++
+	}
+	dev.Printf("wrapped after %d\n", total)
+	var sh uint8 = 1
+	n := uint(9)
+	dev.Printf("%d %d\n", sh<<7, sh<<n)
+	var r rune = 'é'
+	var by byte = 'A' + 2
+	dev.Printf("%d %c %d\n", r, by, by|0x20)
+}

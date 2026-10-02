@@ -1,0 +1,30 @@
+{
+  "init": "z-init",
+  "main": "z-main",
+  "exports": [
+    {
+      "name": "Tick",
+      "word": "z-Tick",
+      "params": [
+        {
+          "name": "n",
+          "type": "int32",
+          "cells": 1
+        }
+      ],
+      "results": []
+    },
+    {
+      "name": "Total",
+      "word": "z-Total",
+      "params": [],
+      "results": [
+        {
+          "type": "int64",
+          "cells": 2
+        }
+      ]
+    }
+  ],
+  "vars": []
+}

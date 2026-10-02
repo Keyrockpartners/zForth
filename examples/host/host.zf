@@ -1,0 +1,4 @@
+( Linux stand-ins for the host words that host/main.zgo binds )
+: led-set ( f -- ) if ." [led on]" else ." [led off]" fi cr ;
+var adc-n
+: adc-read ( ch -- u ) 100 * adc-n @ + 1 adc-n +! ;

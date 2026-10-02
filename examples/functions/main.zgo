@@ -1,0 +1,86 @@
+// Functions: recursion, mutual recursion, multiple and named results,
+// early return.
+package main
+
+import "dev"
+
+func fib(n int32) int32 {
+	if n < 2 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
+}
+
+func fact(n uint64) uint64 {
+	if n <= 1 {
+		return 1
+	}
+	return n * fact(n-1)
+}
+
+func divmod(a, b int32) (int32, int32) {
+	return a / b, a % b
+}
+
+// named results, set and returned with a bare return
+func stats(xs []int32) (lo, hi int32, mean float32) {
+	if len(xs) == 0 {
+		return
+	}
+	lo, hi = xs[0], xs[0]
+	var sum int32
+	for _, x := range xs {
+		lo = min(lo, x)
+		hi = max(hi, x)
+		sum += x
+	}
+	mean = float32(sum) / float32(len(xs))
+	return
+}
+
+// mutual recursion: isEven is called before isOdd is defined
+func isEven(n uint32) bool {
+	if n == 0 {
+		return true
+	}
+	return isOdd(n - 1)
+}
+
+func isOdd(n uint32) bool {
+	if n == 0 {
+		return false
+	}
+	return isEven(n - 1)
+}
+
+func firstNegative(xs []int32) int {
+	for i, x := range xs {
+		if x < 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+func gcd(a, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+var data = [6]int32{4, -2, 9, 7, -5, 3}
+
+func main() {
+	dev.Printf("fib(20) = %d\n", fib(20))
+	dev.Printf("20! = %d\n", fact(20))
+	q, r := divmod(47, 5)
+	dev.Printf("47 = 5*%d + %d\n", q, r)
+	lo, hi, mean := stats(data[:])
+	dev.Printf("lo %d hi %d mean %.3f\n", lo, hi, mean)
+	lo, hi, mean = stats(data[:0])
+	dev.Printf("empty: %d %d %.1f\n", lo, hi, mean)
+	dev.Printf("isEven(10) %t, isOdd(7) %t, isEven(7) %t\n", isEven(10), isOdd(7), isEven(7))
+	dev.Printf("first negative at %d, none at %d\n", firstNegative(data[:]), firstNegative(data[2:4]))
+	dev.Printf("gcd = %d\n", gcd(1071, 462))
+}

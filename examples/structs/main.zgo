@@ -1,0 +1,110 @@
+// Structs, methods and pointers: package-level and local structs, nested
+// structs and arrays, pointer and value receivers, struct copies.
+package main
+
+import "dev"
+
+type Reading struct {
+	Sensor uint8
+	Value  float32
+	Time   uint64
+	Valid  bool
+}
+
+type Stats struct {
+	Count    int32
+	Min, Max float32
+	Sum      float64
+	Last     Reading
+	Hist     [4]uint16
+}
+
+var (
+	stats    Stats
+	readings [3]Reading
+)
+
+// Add has a pointer receiver, so it can change the Stats.
+func (s *Stats) Add(r *Reading) {
+	if !r.Valid {
+		return
+	}
+	if s.Count == 0 || r.Value < s.Min {
+		s.Min = r.Value
+	}
+	if s.Count == 0 || r.Value > s.Max {
+		s.Max = r.Value
+	}
+	s.Count++
+	s.Sum += float64(r.Value)
+	s.Last = *r
+	bucket := int(r.Value / 10)
+	if bucket >= len(s.Hist) {
+		bucket = len(s.Hist) - 1
+	}
+	s.Hist[bucket]++
+}
+
+// Mean has a value receiver: it only reads the Stats.
+func (s Stats) Mean() float64 {
+	if s.Count == 0 {
+		return 0
+	}
+	return s.Sum / float64(s.Count)
+}
+
+type Point struct{ X, Y int32 }
+
+func (p *Point) Move(dx, dy int32) {
+	p.X += dx
+	p.Y += dy
+}
+
+func (p Point) Dist2() int32 { return p.X*p.X + p.Y*p.Y }
+
+func describe(p Point) {
+	dev.Printf("(%d,%d) d2=%d\n", p.X, p.Y, p.Dist2())
+}
+
+type Config struct {
+	Name string
+	Rate int
+}
+
+var (
+	corner = Point{X: 3, Y: 4}
+	path   = [3]Point{{1, 2}, {3, 4}, {5, 6}}
+	cfg    = &Config{Name: "probe", Rate: 10}
+)
+
+func main() {
+	readings[0] = Reading{Sensor: 1, Value: 21.5, Time: 1000, Valid: true}
+	readings[1] = Reading{2, 35, 2000, true}
+	readings[2] = Reading{Sensor: 3}
+	readings[0].Value += 0.25
+	for i := range readings {
+		stats.Add(&readings[i])
+	}
+	dev.Printf("count %d min %.2f max %.2f mean %.3f\n", stats.Count, stats.Min, stats.Max, stats.Mean())
+	dev.Printf("last: sensor %d at %d, hist %d %d %d %d\n", stats.Last.Sensor, stats.Last.Time,
+		stats.Hist[0], stats.Hist[1], stats.Hist[2], stats.Hist[3])
+
+	p := Point{1, 1}
+	p.Move(2, 3)
+	describe(p)
+	describe(corner)
+	q := p
+	q.X = 100
+	dev.Printf("p.X=%d q.X=%d\n", p.X, q.X)
+
+	ptr := &path[1]
+	ptr.Move(10, 10)
+	ptr.Y = -ptr.Y
+	for _, pt := range path {
+		describe(pt)
+	}
+	cfg.Rate *= 2
+	dev.Printf("%s every %d s\n", cfg.Name, cfg.Rate)
+	var none *Point
+	dev.Printf("none is nil: %v, ptr is nil: %v\n", none == nil, ptr == nil)
+}

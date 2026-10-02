@@ -1,0 +1,45 @@
+// Package variables, init, and state that persists across calls from the
+// firmware (see calls.txt).
+package main
+
+import "dev"
+
+var (
+	count   uint32
+	total   int64
+	name    = "counter"
+	limits  = [3]int32{10, 100, 1000}
+	scale   = computeScale()
+	started bool
+)
+
+func computeScale() float32 { return 2.5 }
+
+func init() {
+	started = true
+	count = 1
+}
+
+func init() {
+	dev.Printf("init: %s, scale %.1f, started %v\n", name, scale, started)
+}
+
+// Tick is called by the firmware; it remembers its state between calls.
+func Tick(n int32) {
+	count++
+	total += int64(n)
+	level := 0
+	for i, l := range limits {
+		if total >= int64(l) {
+			level = i + 1
+		}
+	}
+	dev.Printf("tick %d: total %d, level %d\n", count, total, level)
+}
+
+// Total returns the running total.
+func Total() int64 { return total }
+
+func main() {
+	Tick(5)
+}

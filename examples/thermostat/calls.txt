@@ -1,0 +1,11 @@
+20.0e0 1000. z-OnReading
+20.4e0 61000. z-OnReading
+21.6e0 121000. z-OnReading
+19.0e0 181000. z-OnReading
+400000. z-OnTick
+z-Status . . cr
+z-Reset
+23.0e0 z-SetSetpoint . 40.0e0 z-SetSetpoint . cr
+22.0e0 420000. z-OnReading
+36.0e0 480000. z-OnReading
+z-Status . . cr

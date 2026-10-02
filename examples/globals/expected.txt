@@ -1,0 +1,6 @@
+init: counter, scale 2.5, started true
+tick 2: total 5, level 0
+tick 3: total 12, level 1
+tick 4: total 112, level 2
+tick 5: total 1012, level 3
+1012 

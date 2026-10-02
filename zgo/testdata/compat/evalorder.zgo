@@ -1,0 +1,68 @@
+package main
+
+import "dev"
+
+var a [5]int32
+var calls int32
+
+func next(x int32) int32 {
+	calls++
+	dev.Printf("next(%d) ", x)
+	return x
+}
+
+func idx(i int) int {
+	dev.Printf("idx(%d) ", i)
+	return i
+}
+
+func t(b bool, s string) bool {
+	dev.Printf("%s ", s)
+	return b
+}
+
+func pair() (int32, int32) { return next(1), next(2) }
+
+func main() {
+	// arguments left to right
+	dev.Printf("%d %d %d\n", next(1), next(2), next(3))
+	// index expression evaluated once in op-assign
+	a[idx(2)] += 10
+	a[idx(2)]++
+	dev.Printf("a[2]=%d\n", a[2])
+	// index operands before the value
+	a[idx(1)] = next(7)
+	dev.Printf("\n")
+	// multiple assignment: right side uses old values
+	i := 1
+	i, a[i] = 3, 9
+	dev.Printf("i=%d a[1]=%d a[3]=%d\n", i, a[1], a[3])
+	x, y := int32(1), int32(2)
+	x, y = y, x
+	dev.Printf("x=%d y=%d\n", x, y)
+	a[0], a[4] = a[4], a[0]+5
+	dev.Printf("a[0]=%d a[4]=%d\n", a[0], a[4])
+	// the same variable twice: the last assignment wins
+	x, x = 10, 20
+	dev.Printf("x=%d\n", x)
+	// short circuit
+	if t(false, "f1") && t(true, "t1") {
+		dev.Printf("no")
+	}
+	if t(true, "t2") || t(true, "t3") {
+		dev.Printf("yes\n")
+	}
+	r := t(true, "a") && (t(false, "b") || t(true, "c")) && !t(false, "d")
+	dev.Printf("r=%v\n", r)
+	// switch cases are evaluated lazily, in order
+	switch next(5) {
+	case next(4), next(5), next(6):
+		dev.Printf("matched\n")
+	case next(7):
+		dev.Printf("no\n")
+	}
+	p, q := pair()
+	dev.Printf("pair %d %d, calls %d\n", p, q, calls)
+	_, q = pair()
+	dev.Printf("q %d\n", q)
+}

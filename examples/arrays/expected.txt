@@ -1,0 +1,9 @@
+10.0 15.0 20.0 25.0 35.0 45.0 
+len 8, sum 77, first four 17, from 5 49
+0:6 1:4 2:5 3:3 4:2 5:1 
+grid[1][2]=12 grid[2][3]=-1 row 2 sum=62
+copied 4: 5 3 2 1
+overlapping copy 5: 6 6 2
+flags false true, big -1099511627776 -3298534883328, two
+len(s)=2 s[1]=5 s==nil false
+empty: len 0, nil true

@@ -1,0 +1,36 @@
+package main
+
+import "dev"
+
+func main() {
+	vals := [...]int64{0, 1, -1, 4294967295, 4294967296, -4294967296, 9223372036854775807, -9223372036854775808, 123456789012345}
+	for _, v := range vals {
+		dev.Printf("%d %d %d\n", v/7, v%7, v>>33)
+	}
+	var a int64 = -17
+	var b int64 = 5
+	dev.Printf("%d %d %d %d\n", a/b, a%b, -a/b, a/(-b))
+	var ua uint64 = 18446744073709551615
+	var ub uint64 = 10
+	dev.Printf("%d %d %d\n", ua/ub, ua%ub, ua*ub)
+	for s := uint(0); s < 70; s += 7 {
+		dev.Printf("%d:%x:%d ", s, uint64(0xDEADBEEFCAFEF00D)>>s, int64(-0x7EADBEEFCAFEF00D)>>s)
+	}
+	dev.Printf("\n")
+	for s := uint(0); s < 70; s += 9 {
+		dev.Printf("%x ", uint64(0x123456789ABCDEF)<<s)
+	}
+	dev.Printf("\n")
+	x := int64(0x0F0F0F0F0F0F0F0F)
+	y := int64(-0x00FF00FF00FF0100)
+	dev.Printf("%d %d %d %d %d\n", x&y, x|y, x^y, x&^y, ^x)
+	dev.Printf("%v %v %v %v\n", a < b, ua > ub, int64(-1) < int64(0), uint64(1<<63) > uint64(1))
+	dev.Printf("%d %d\n", min(a, b, -100), max(ua, ub))
+	var c int32 = -5
+	var d uint32 = 4000000000
+	dev.Printf("%d %d %d\n", int64(c), uint64(d), int64(d)*int64(c))
+	var t uint64 = 1700000000123
+	dev.Printf("%d s %d ms\n", t/1000, t%1000)
+	var shift64 uint64 = 3
+	dev.Printf("%d\n", int64(1)<<(shift64*20))
+}

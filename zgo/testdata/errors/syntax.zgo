@@ -1,0 +1,18 @@
+package main
+
+type Pair[T any] struct{ a, b T } // ERROR "generics are not supported"
+
+func sum(xs ...int) int { return 0 } // ERROR "variadic functions are not supported"
+
+type Outer struct {
+	Inner // ERROR "embedded fields are not supported"
+}
+
+type Inner struct{ x int }
+
+var buf [8]byte
+
+func main() {
+	s := buf[1:2:4] // ERROR "three-index slices are not supported"
+	_ = s
+}

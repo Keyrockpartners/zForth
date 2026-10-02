@@ -1,0 +1,22 @@
+package main
+
+type Point struct{ X, Y int32 }
+
+var a, b [4]int32
+var p, q Point
+
+func takesArray(x [4]int32) {} // ERROR "arrays are not passed by value: pass a slice"
+
+func makesArray() [4]int32 { return a } // ERROR "functions cannot return arrays"
+
+func makesPoint() Point { return p } // ERROR "functions cannot return structs"
+
+func (pt Point) Len() int32 { return pt.X + pt.Y }
+
+func main() {
+	_ = a == b // ERROR "comparing arrays or structs with == is not supported"
+	_ = p == q // ERROR "comparing arrays or structs with == is not supported"
+	f := p.Len // ERROR "closures and function values are not supported"
+	g := main  // ERROR "closures and function values are not supported"
+	_, _ = f, g
+}

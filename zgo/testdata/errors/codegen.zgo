@@ -1,0 +1,34 @@
+package main
+
+type Point struct{ X, Y int32 }
+
+func depth(n int) int {
+	var scratch [4]int // ERROR "local arrays and structs are not allowed in recursive functions"
+	if n == 0 {
+		return 0
+	}
+	scratch[0] = n
+	return depth(n-1) + scratch[0]
+}
+
+func move(p Point) {
+	p.X = 5 // ERROR "struct parameters are read-only"
+}
+
+func (p Point) Shift() {
+	p.Y++ // ERROR "a value receiver is read-only"
+}
+
+func addr() *int32 {
+	var x int32
+	return &x // ERROR "cannot take the address of local variable x"
+}
+
+func ThisExportedFunctionNameIsFarTooLong() {} // ERROR "exported name ThisExportedFunctionNameIsFarTooLong is too long"
+
+func main() {
+	type local int // ERROR "local type declarations are not supported"
+	depth(3)
+	move(Point{})
+	addr()
+}

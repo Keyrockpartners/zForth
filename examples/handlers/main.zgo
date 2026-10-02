@@ -1,0 +1,47 @@
+// Exported handlers that the firmware calls with arguments; calls.txt
+// plays the firmware. The manifest (main.json) lists them.
+package main
+
+import "dev"
+
+var (
+	lastTemp  float32
+	lastTime  uint64
+	alarmTemp float32 = 30
+)
+
+// Presses is exported, so the firmware can read it: the manifest lists its
+// word, z-Presses, which pushes its address.
+var Presses [4]uint16
+
+// OnTemperature is called with each reading and its timestamp in ms.
+func OnTemperature(t float32, ts uint64) {
+	if lastTime != 0 {
+		dt := ts - lastTime
+		rate := (t - lastTemp) / float32(dt) * 60000
+		dev.Printf("%.1f C at %d (%+.2f C/min)\n", t, ts, rate)
+	} else {
+		dev.Printf("%.1f C at %d\n", t, ts)
+	}
+	if t > alarmTemp {
+		dev.Printf("ALARM: %.1f > %.1f\n", t, alarmTemp)
+	}
+	lastTemp, lastTime = t, ts
+}
+
+// OnButton counts Presses per button and reports whether it was a long run.
+func OnButton(id uint8) bool {
+	if int(id) >= len(Presses) {
+		dev.Printf("unknown button %d\n", id)
+		return false
+	}
+	Presses[id]++
+	dev.Printf("button %d pressed %d times\n", id, Presses[id])
+	return Presses[id]%3 == 0
+}
+
+// SetAlarm changes the alarm threshold and returns the old one.
+func SetAlarm(t float32) (old float32) {
+	old, alarmTemp = alarmTemp, t
+	return
+}
