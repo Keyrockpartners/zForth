@@ -720,14 +720,17 @@ static zf_addr dict_put_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell v, zf_mem_
 static zf_addr dict_get_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell *v, zf_mem_size size)
 {
 	uint8_t t[2];
-	dict_get_bytes(ctx, addr, t, sizeof(t));
 
 	if(size == ZF_MEM_SIZE_VAR) {
+		/* Only read the bytes the encoding uses, so a cell at the very end
+		 * of the dictionary or data window can be read */
+		dict_get_bytes(ctx, addr, t, 1);
 		if(t[0] & 0x80) {
 			if(t[0] == 0xff) {
 				dict_get_bytes(ctx, addr+1, v, sizeof(*v));
 				return 1 + sizeof(*v);
 			} else {
+				dict_get_bytes(ctx, addr+1, &t[1], 1);
 				*v = ((t[0] & 0x3f) << 8) + t[1];
 				return 2;
 			}
