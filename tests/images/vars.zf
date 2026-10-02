@@ -1,0 +1,7 @@
+42 variable foo
+var bar
+1 variable small
+123 bar !
+( a 5-byte buffer in the data window, filled at export time )
+data-here 5 data-allot constant buf
+104 buf !u8 101 buf 1 + !u8 108 buf 2 + !u8 108 buf 3 + !u8 111 buf 4 + !u8

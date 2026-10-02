@@ -14,10 +14,14 @@ src/linux/zforth: FORCE
 src/linux/zforth-rom: FORCE
 	$(MAKE) -C src/linux zforth-rom
 
+test:
+	bash tests/run.sh
+
 clean:
 	$(MAKE) -C src/linux clean
 	$(MAKE) -C src/atmega8 clean
 	rm -f zforth_dict.h
+	rm -rf tests/build
 
-.PHONY: all linux-rom clean FORCE
+.PHONY: all linux-rom test clean FORCE
 FORCE:

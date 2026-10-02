@@ -1,0 +1,4 @@
+: hyp {: a b | c :} a a * b b * + to c c ;
+: dsum {: d: x d: y :} x y d+ ;
+: fact {: n :} n 2 < if 1 else n 1 - fact n * fi ;
+2variable total

@@ -11,3 +11,4 @@ openspec
 .opencode
 zforth_dict.h
 .direnv
+tests/build
