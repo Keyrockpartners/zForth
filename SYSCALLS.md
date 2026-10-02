@@ -24,7 +24,7 @@ Device builds should call `zf_init_checked()` (not `zf_init()`) and check the re
 
 Variables defined with `var`/`variable`, buffers made with `N buffer: name`, and other storage from `data-here`/`data-allot` get their storage in the data window during export. The window is copied to RAM at mount time, so they stay writable when the image is in flash. Anything else written into the dictionary at export time — e.g. a buffer made with `here N allot` — is part of the read-only image and aborts with `outside memory` if written at runtime.
 
-A checkpoint compiled into the image (e.g. `chkpt base` at the end of a script) can be used at runtime to drop everything defined since mount; new definitions then start right after the data window.
+A checkpoint compiled into the image can be used at runtime to drop everything defined since mount; new definitions then start right after the data window. `bs.zf` ends with `chkpt empty`, so running `empty` resets the interpreter to the baked-in words (keeping their variables' values) and clears the stacks.
 
 ## Required BlueStreak user syscalls
 

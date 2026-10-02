@@ -308,7 +308,8 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	ctx->read_len = 0;
 	COMPILING(ctx) = 0;
 	POSTPONE(ctx) = 0;
-	DSP(ctx) = 0;
+	/* Unwind the return stack: the code being run may have been discarded.
+	 * The data stack is left alone, as for ANS MARKER */
 	RSP(ctx) = 0;
 }
 

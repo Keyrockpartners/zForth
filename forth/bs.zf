@@ -24,9 +24,15 @@ include forth/memaccess.zf
   this file is baked into a ROM image. Contents are not cleared. )
 : buffer: data-here swap data-allot constant ;
 
-( Keep this last: running base drops everything defined after this point,
-  e.g. a downloaded script, and empties the stacks. )
-chkpt base
+( ANS marker: marker name defines name, which when run discards itself and
+  everything defined after it. The checkpoint buffer goes before the header
+  and is saved with h pointing at it, so restoring frees the buffer too. )
+: marker here chkpt-size allot here >r dup h ! dup chkpt! r> h ! >r : r> postpone literal ' chkpt-restore , postpone ; ;
+
+( Keep this last. Like GILD and EMPTY in other Forths: running empty drops
+  everything defined after this point, e.g. a downloaded script, and clears
+  the stacks. Unlike a marker, empty itself survives and can be reused. )
+chkpt empty
 
 
 
