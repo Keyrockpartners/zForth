@@ -3,8 +3,8 @@ go
 *.o
 *.swp
 *.swo
-zforth
-zforth-rom
+/src/linux/zforth
+/src/linux/zforth-rom
 zforth.save
 .zforth.hist
 openspec
