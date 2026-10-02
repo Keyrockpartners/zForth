@@ -7,6 +7,7 @@ This directory contains a Forth implementation that we plan to use for scripting
 - `LANGUAGE.md`: the ZGo language reference. **Read it before writing ZGo code**: it lists what is supported, every difference from Go, what is rejected and what to use instead, device limits, and a style guide.
 - `ZGO_PLAN.md`: the ZGo design. Its section 0 explains the background, the decisions already made, what zForth provides today, and known gotchas. Read it before working on the compiler (`zgo/`) or on zForth features it depends on.
 - `SYSCALLS.md`: what a device host must implement (syscalls, callbacks, abort reasons, `fmt` placeholders, prebuilt ROM dictionaries).
+- `plans/`: design plans for work in progress or not yet started (for example `plans/protobuf.md`, protobuf support). Read the relevant plan before working in its area, and keep it current as decisions change.
 - `make test`: runs every zForth and ZGo test (`tests/run.sh`, then `make test-zgo`). Keep it passing, and add tests with every change: under `tests/` for zForth, `zgo/testdata/compat` (compared with real Go), `zgo/testdata/errors` or `examples/` for ZGo.
 
 ## Development environment
