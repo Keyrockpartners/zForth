@@ -21,6 +21,7 @@ for s in tests/suites/*.sh; do
 done
 echo "--"
 bash tests/images.sh || status=1
+bash tests/host.sh || status=1
 bash tests/limits.sh || status=1
 bash tests/configs.sh || status=1
 

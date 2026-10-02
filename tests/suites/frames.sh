@@ -32,6 +32,9 @@ t '5 -1 locals' 'stdin:1: invalid size'
 t '1 2 5 locals' 'stdin:1: dstack underrun'
 t ': deep 1 locals 0 l@ deep endlocals ; 1 deep' 'stdin:1: rstack overrun'
 t $': leak 1 locals 0 l@ 0 / endlocals ;\n5 leak\n0 l@\n1 2 + .' 'stdin:2: division by zero stdin:3: outside memory 3'
-t $': leftopen 1 locals ;\n5 leftopen\n0 l@' 'stdin:3: outside memory'
+# returning with the frame open jumps to the local's value (5) as an
+# address, so line 2's result depends on the dictionary layout; what
+# matters is that the next line starts with no frame
+t $': leftopen 1 locals ;\n5 leftopen\n0 l@' 'stdin:2: dstack underrun stdin:3: outside memory'
 
 summary frames

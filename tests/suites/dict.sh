@@ -29,4 +29,9 @@ t '1 2 empty .' 'stdin:1: dstack underrun'
 t $': half 1 2 empty\n: hi 7 . ; hi\nhalf' 'stdin:3: not a word 7'
 t $': hi 7 . ;\nempty\nhi\n: hi 8 . ; hi empty empty 1 2 + .' 'stdin:3: not a word 8 3'
 
+# a five-byte cell that straddles the end of the allocated dictionary
+# grows it, at every alignment
+t ': fl 5000 0 do 123456789 , loop ; fl 1 2 + .' '3'
+t ': fl2 3000 0 do 1 allot 123456789 , loop ; fl2 3 4 + .' '7'
+
 summary dict

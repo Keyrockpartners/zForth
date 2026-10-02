@@ -45,6 +45,10 @@ With `ZF_ENABLE_DFLOAT` (on by default), a double-precision float is an IEEE-754
 
 With `ZF_ENABLE_FLOAT` (on by default), a float is an IEEE-754 single-precision value stored in one cell as its bit pattern, on the same stack as integers. The float words (`f+ f- f* f/ f< f= s>f u>f f>s fsqrt ffloor fceil fround ftrunc`, and those in `forth/float.zf`) are built into the interpreter, so hosts implement nothing for them. A syscall that takes or returns a float should convert with `zf_cell_to_float()` and `zf_float_to_cell()`.
 
+## Abort reasons
+
+`zf_eval()` returns a `zf_result`. Besides the stack, memory and parsing errors, two reasons come from Forth code: `ZF_ABORT_BOUNDS` ("index out of range") from the `?bounds` primitive, used for array, slice and string index checks, and `ZF_ABORT_USER` ("aborted") from the `abort` primitive, used to stop on an error after printing a message. Like the others, they abort only the current `zf_eval()` call. Hosts that print abort reasons should add messages for them.
+
 ## Prebuilt dictionaries
 
 `zforth -H NAME file.zf...` emits `NAME[]`, `NAME_len`, and `NAME_data_len`. The array is the dictionary image followed by the initial contents of the data window (its last `NAME_data_len` bytes). Pass all three unchanged to `zf_dict_mount_rom()` (ROM builds) or `zf_dict_import_with_data()`.
@@ -60,6 +64,9 @@ Application-specific syscalls start at `ZF_SYSCALL_USER` (`128`). For IoT device
 | ID | Name / Forth word | Stack effect | Required behavior |
 | --- | --- | --- | --- |
 | `ZF_SYSCALL_USER + 4` (`132`) | `fmt` | `( arg... fmt-addr fmt-len -- )` | Format and output a string from dictionary memory, following C `printf` conventions (see below). Format arguments are pushed before the format string, in left-to-right placeholder order. `u.`, `f.`, `d.`, `ud.` and `df.` are built on `fmt`. |
+| `ZF_SYSCALL_USER + 5` (`133`) | `fmt-buf` | `( buf-addr buf-len arg... fmt-addr fmt-len -- n )` | Like `fmt`, but write the output into the dictionary buffer at `buf-addr` instead of printing it. Write at most `buf-len` bytes (truncating; no terminating NUL) and push `n`, the number of bytes written. The buffer sits below the arguments; count the argument cells from the format string to find it. Write with `zf_dict_write_bytes()` (buffers usually live in the data window), and build the output in C memory first, since a dictionary write may move the dictionary. |
+| `ZF_SYSCALL_USER + 6` (`134`) | `ms` | `( u -- )` | Wait `u` milliseconds (unsigned). On a device, yield to other tasks while waiting (e.g. `vTaskDelay`). |
+| `ZF_SYSCALL_USER + 7` (`135`) | `millis` | `( -- ud )` | Push the milliseconds since boot as an unsigned 64-bit double cell, `( lo hi )`, e.g. from `esp_timer_get_time() / 1000`. |
 
 ### `fmt` placeholders
 
@@ -71,13 +78,13 @@ A placeholder is `%[flags][width][.precision][l]verb`, with flags from `-`, `0`,
 | `u` | unsigned integer, 1 cell | unsigned 64-bit, 2 cells |
 | `x` `X` | unsigned integer in hex, 1 cell | 64-bit hex, 2 cells |
 | `c` | character, 1 cell | not allowed |
-| `f` `e` `g` | single float, 1 cell | double float, 2 cells |
+| `f` `e` `E` `g` `G` | single float, 1 cell | double float, 2 cells |
 | `s` | string `( addr len )`; precision limits the length | not allowed |
 | `%` | literal `%`, no argument | not allowed |
 
 Anything that is not a valid placeholder is printed as is and consumes no argument. A host can implement each placeholder by popping its cells and passing a rebuilt C format (with the matching `PRId32`/`PRIu64`/... length modifier) to `printf` or `snprintf`; `src/linux/main.c` does exactly that.
 
-IDs `133`–`136` (formerly `floor`, `ceil`, `round`, `trunc`) are no longer used; those operations are now the built-in float words `ffloor`, `fceil`, `fround` and `ftrunc`.
+IDs `133`–`135` were once `floor`, `ceil` and `round`, which are now the built-in float words `ffloor`, `fceil` and `fround` (and `ftrunc`); they have been reused for `fmt-buf`, `ms` and `millis` above. ID `136` is unused.
 
 ## Linux-only user syscalls
 
