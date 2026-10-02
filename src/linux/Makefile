@@ -7,7 +7,10 @@ OBJS    := $(subst .c,.o, $(SRC))
 ROM_OBJS := main_rom.o zforth_rom.o
 DEPS    := $(subst .c,.d, $(SRC)) $(subst .o,.d, $(ROM_OBJS))
 
+# Use $(CC) from the environment if set (e.g. from a dev shell), else gcc
+ifeq ($(origin CC),default)
 CC	:= $(CROSS)gcc
+endif
 
 VPATH   := ../zforth
 CFLAGS	+= -I. -I../zforth
