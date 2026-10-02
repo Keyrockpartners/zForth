@@ -4,10 +4,11 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <math.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <time.h>
+#include <unistd.h>
 
 #ifdef USE_READLINE
 #include <readline/readline.h>
@@ -17,13 +18,22 @@
 #include "zforth.h"
 
 #if ZF_LINUX_ROM_DICT
+/* -DZF_DICT_HEADER='"path/image.h"' selects another prebuilt image; the
+ * default "zforth_dict.h" is found next to this file first */
+#ifdef ZF_DICT_HEADER
+#include ZF_DICT_HEADER
+#else
 #include "zforth_dict.h"
+#endif
 #endif
 
 
 /*
  * Evaluate buffer with code, check return value and report errors
  */
+
+/* Set when evaluating a file or -e word fails, for the exit status */
+static int had_error = 0;
 
 zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
 {
@@ -45,6 +55,8 @@ zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
 		case ZF_ABORT_INVALID_SIZE: msg = "invalid size"; break;
 		case ZF_ABORT_DIVISION_BY_ZERO: msg = "division by zero"; break;
 		case ZF_ABORT_BAD_LOCALS: msg = "bad locals declaration"; break;
+		case ZF_ABORT_BOUNDS: msg = "index out of range"; break;
+		case ZF_ABORT_USER: msg = "aborted"; break;
 		default: msg = "unknown error";
 	}
 
@@ -64,17 +76,18 @@ zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
 
 void include(zf_ctx *ctx, const char *fname)
 {
-	char buf[256];
+	char buf[4096];
 
 	FILE *f = fopen(fname, "rb");
 	int line = 1;
 	if(f) {
 		while(fgets(buf, sizeof(buf), f)) {
-			do_eval(ctx, fname, line++, buf);
+			if(do_eval(ctx, fname, line++, buf) != ZF_OK) had_error = 1;
 		}
 		fclose(f);
 	} else {
 		fprintf(stderr, "error opening file '%s': %s\n", fname, strerror(errno));
+		had_error = 1;
 	}
 }
 
@@ -290,8 +303,9 @@ static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
 /*
  * fmt: printf-style output with C conventions. A placeholder is
  * %[flags][width][.precision][l]verb, flags from "-0+ #". Verbs d (signed),
- * u (unsigned), x X (hex) and c take one cell, f e g one float cell; with the
- * l prefix d u x X take a 64-bit double cell and f e g a double float, both
+ * u (unsigned), x X (hex) and c take one cell, f e E g G one float cell; with
+ * the l prefix d u x X take a 64-bit double cell and f e E g G a double float,
+ * both
  * ( lo hi ). s takes ( addr len ). %% is a literal %. Anything else is
  * printed as is and consumes no argument.
  */
@@ -336,7 +350,7 @@ static int fmt_parse(const uint8_t *fmt, size_t n, size_t i, fmt_spec *sp)
 		sp->lng = 1;
 		j++;
 	}
-	if(j >= n || fmt[j] == '\0' || !strchr("duxXcfegs%", fmt[j])) return 0;
+	if(j >= n || fmt[j] == '\0' || !strchr("duxXcfeEgGs%", fmt[j])) return 0;
 	sp->verb = (char)fmt[j];
 	if(sp->lng && strchr("cs%", sp->verb)) return 0;
 	sp->len = j - i + 1;
@@ -359,25 +373,70 @@ static void fmt_cspec(char *out, size_t size, const fmt_spec *sp, const char *co
 	snprintf(out, size, "%%%s%s%s%s", sp->flags, width, prec, conv);
 }
 
-static void fmt_syscall(zf_ctx *ctx)
-{
-	zf_cell fmt_len_cell = zf_pop(ctx);
-	zf_cell fmt_addr_cell = zf_pop(ctx);
-	const uint8_t *fmt = checked_dict_range(ctx, fmt_addr_cell, fmt_len_cell);
-	size_t fmt_len = (size_t)fmt_len_cell;
-	zf_cell args[ZF_FMT_MAX_ARG_CELLS];
-	fmt_spec sp;
-	char cspec[32];
-	int cells = 0;
-	int ai;
-	size_t i;
+/* Where fmt output goes: stdout, or a C buffer of cap bytes that keeps the
+ * first cap bytes and drops the rest */
+typedef struct {
+	char *buf;    /* NULL for stdout */
+	size_t cap;
+	size_t len;
+} fmt_sink;
 
+static void sink_write(fmt_sink *out, const char *p, size_t n)
+{
+	if(out->buf == NULL) {
+		(void)fwrite(p, 1, n, stdout);
+		return;
+	}
+	if(out->len < out->cap) {
+		size_t room = out->cap - out->len;
+		memcpy(out->buf + out->len, p, n < room ? n : room);
+	}
+	out->len += n;
+}
+
+static void sink_printf(fmt_sink *out, const char *cfmt, ...)
+{
+	char tmp[600];
+	int n;
+	va_list va;
+	va_start(va, cfmt);
+	n = vsnprintf(tmp, sizeof(tmp), cfmt, va);
+	va_end(va);
+	if(n < 0) return;
+	if((size_t)n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+	sink_write(out, tmp, (size_t)n);
+}
+
+static void sink_pad(fmt_sink *out, int n)
+{
+	while(n-- > 0) sink_write(out, " ", 1);
+}
+
+/* Number of argument cells the placeholders in fmt take */
+static int fmt_arg_cells(const uint8_t *fmt, size_t fmt_len)
+{
+	fmt_spec sp;
+	int cells = 0;
+	size_t i;
 	for(i = 0; i < fmt_len; i++) {
 		if(fmt[i] == '%' && fmt_parse(fmt, fmt_len, i + 1, &sp)) {
 			cells += fmt_cells(&sp);
 			i += sp.len;
 		}
 	}
+	return cells;
+}
+
+/* Format fmt[0..fmt_len) with arguments popped from the stack into out */
+static void fmt_format(zf_ctx *ctx, const uint8_t *fmt, size_t fmt_len, fmt_sink *out)
+{
+	zf_cell args[ZF_FMT_MAX_ARG_CELLS];
+	fmt_spec sp;
+	char cspec[32];
+	int cells = fmt_arg_cells(fmt, fmt_len);
+	int ai;
+	size_t i;
+
 	if(cells > ZF_FMT_MAX_ARG_CELLS) {
 		zf_abort(ctx, ZF_ABORT_EXTERNAL);
 	}
@@ -389,15 +448,18 @@ static void fmt_syscall(zf_ctx *ctx)
 
 	ai = cells - 1;
 	for(i = 0; i < fmt_len; i++) {
+		size_t start = i;
 		if(fmt[i] != '%' || !fmt_parse(fmt, fmt_len, i + 1, &sp)) {
-			putchar((char)fmt[i]);
+			/* Copy the run of plain text up to the next % in one go */
+			while(i + 1 < fmt_len && fmt[i + 1] != '%') i++;
+			sink_write(out, (const char *)fmt + start, i - start + 1);
 			continue;
 		}
 		i += sp.len;
 
 		switch(sp.verb) {
 			case '%':
-				putchar('%');
+				sink_write(out, "%", 1);
 				break;
 
 			case 'd': case 'u': case 'x': case 'X': {
@@ -408,24 +470,24 @@ static void fmt_syscall(zf_ctx *ctx)
 					uint64_t v = (hi << 32) | lo;
 					conv = sp.verb == 'd' ? PRId64 : sp.verb == 'u' ? PRIu64 : sp.verb == 'x' ? PRIx64 : PRIX64;
 					fmt_cspec(cspec, sizeof(cspec), &sp, conv);
-					if(sp.verb == 'd') printf(cspec, (int64_t)v);
-					else printf(cspec, v);
+					if(sp.verb == 'd') sink_printf(out, cspec, (int64_t)v);
+					else sink_printf(out, cspec, v);
 				} else {
 					zf_cell v = args[ai--];
 					conv = sp.verb == 'd' ? PRId32 : sp.verb == 'u' ? PRIu32 : sp.verb == 'x' ? PRIx32 : PRIX32;
 					fmt_cspec(cspec, sizeof(cspec), &sp, conv);
-					if(sp.verb == 'd') printf(cspec, (int32_t)v);
-					else printf(cspec, (uint32_t)v);
+					if(sp.verb == 'd') sink_printf(out, cspec, (int32_t)v);
+					else sink_printf(out, cspec, (uint32_t)v);
 				}
 				break;
 			}
 
 			case 'c':
 				fmt_cspec(cspec, sizeof(cspec), &sp, "c");
-				printf(cspec, (int)(unsigned char)args[ai--]);
+				sink_printf(out, cspec, (int)(unsigned char)args[ai--]);
 				break;
 
-			case 'f': case 'e': case 'g': {
+			case 'f': case 'e': case 'E': case 'g': case 'G': {
 				char conv[2] = { sp.verb, '\0' };
 				double v;
 				if(sp.lng) {
@@ -436,7 +498,7 @@ static void fmt_syscall(zf_ctx *ctx)
 					v = zf_cell_to_float(args[ai--]);
 				}
 				fmt_cspec(cspec, sizeof(cspec), &sp, conv);
-				printf(cspec, v);
+				sink_printf(out, cspec, v);
 				break;
 			}
 
@@ -445,17 +507,77 @@ static void fmt_syscall(zf_ctx *ctx)
 				zf_cell len = args[ai--];
 				const uint8_t *str = checked_dict_range(ctx, addr, len);
 				int n = (int)len;
-				fmt_spec ws = sp;
+				int pad;
 				if(sp.prec >= 0 && sp.prec < n) n = sp.prec;
-				ws.prec = -1;
-				fmt_cspec(cspec, sizeof(cspec), &ws, ".*s");
-				printf(cspec, n, (const char *)str);
+				pad = sp.width > n ? sp.width - n : 0;
+				if(!strchr(sp.flags, '-')) sink_pad(out, pad);
+				sink_write(out, (const char *)str, (size_t)n);
+				if(strchr(sp.flags, '-')) sink_pad(out, pad);
 				break;
 			}
 		}
 	}
+}
 
+/* fmt ( args... fmt-addr fmt-len -- ): format to stdout */
+static void fmt_syscall(zf_ctx *ctx)
+{
+	zf_cell fmt_len = zf_pop(ctx);
+	zf_cell fmt_addr = zf_pop(ctx);
+	const uint8_t *fmt = checked_dict_range(ctx, fmt_addr, fmt_len);
+	fmt_sink out = { NULL, 0, 0 };
+	fmt_format(ctx, fmt, (size_t)fmt_len, &out);
 	fflush(stdout);
+}
+
+/* fmt-buf ( buf-addr buf-len args... fmt-addr fmt-len -- n ): format into a
+ * dictionary buffer, truncating to buf-len bytes; n is the number of bytes
+ * written. The output is built in C memory and copied in one write, since a
+ * dictionary write may move the dictionary. */
+static void fmt_buf_syscall(zf_ctx *ctx)
+{
+	zf_cell fmt_len = zf_pop(ctx);
+	zf_cell fmt_addr = zf_pop(ctx);
+	const uint8_t *fmt = checked_dict_range(ctx, fmt_addr, fmt_len);
+	static char *scratch = NULL;
+	static size_t scratch_cap = 0;
+	fmt_sink out = { NULL, 0, 0 };
+	zf_cell buf_len, buf_addr;
+	size_t n;
+
+	/* buf-len sits just below the arguments */
+	buf_len = zf_pick(ctx, (zf_addr)fmt_arg_cells(fmt, (size_t)fmt_len));
+	out.cap = buf_len > 0 ? (size_t)buf_len : 0;
+	/* A static scratch buffer, grown as needed, so an abort while
+	 * formatting can't leak it */
+	if(out.cap + 1 > scratch_cap) {
+		char *p = realloc(scratch, out.cap + 1);
+		if(p == NULL) zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		scratch = p;
+		scratch_cap = out.cap + 1;
+	}
+	out.buf = scratch;
+	fmt_format(ctx, fmt, (size_t)fmt_len, &out);
+	buf_len = zf_pop(ctx);
+	buf_addr = zf_pop(ctx);
+	n = out.len < out.cap ? out.len : out.cap;
+	if(n > 0) {
+		(void)checked_dict_range(ctx, buf_addr, (zf_cell)n);
+		zf_dict_write_bytes(ctx, (zf_addr)buf_addr, out.buf, n);
+	}
+	zf_push(ctx, (zf_cell)n);
+}
+
+/* Milliseconds since an arbitrary start, like millis() on a device */
+static uint64_t millis(void)
+{
+	static uint64_t start = 0;
+	struct timespec ts;
+	uint64_t now;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	now = (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+	if(start == 0) start = now;
+	return now - start;
 }
 
 /*
@@ -513,6 +635,29 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 			fmt_syscall(ctx);
 			break;
 
+		case ZF_SYSCALL_USER + 5:
+			fmt_buf_syscall(ctx);
+			break;
+
+		case ZF_SYSCALL_USER + 6: {
+			/* ms ( u -- ): delay for u milliseconds */
+			zf_ucell ms = (zf_ucell)zf_pop(ctx);
+			struct timespec ts;
+			ts.tv_sec = ms / 1000u;
+			ts.tv_nsec = (long)(ms % 1000u) * 1000000L;
+			fflush(stdout);
+			nanosleep(&ts, NULL);
+			break;
+		}
+
+		case ZF_SYSCALL_USER + 7: {
+			/* millis ( -- ud ): milliseconds since start, 64-bit */
+			uint64_t v = millis();
+			zf_push(ctx, (zf_cell)(zf_ucell)(v & 0xffffffffu));
+			zf_push(ctx, (zf_cell)(zf_ucell)(v >> 32));
+			break;
+		}
+
 		default:
 			printf("unhandled syscall %d\n", id);
 			break;
@@ -551,7 +696,9 @@ zf_cell zf_host_parse_num(zf_ctx *ctx, const char *buf)
 void usage(void)
 {
 	fprintf(stderr, 
-		"usage: zfort [options] [src ...]\n"
+		"usage: zforth [options] [src | -e WORD ...]\n"
+		"\n"
+		"Source files and -e words are run in command-line order.\n"
 		"\n"
 		"Options:\n"
 		"   -h         show help\n"
@@ -559,6 +706,10 @@ void usage(void)
 		"   -t         enable tracing\n"
 		"   -l FILE    load dictionary from FILE\n"
 		"   -q         quiet\n"
+		"   -e WORD    evaluate WORD (any Forth text) after the files before it\n"
+		"   -x         exit after the files and -e words instead of reading stdin\n"
+		"\n"
+		"The exit status is 1 if a file or -e word failed.\n"
 	);
 }
 
@@ -570,37 +721,62 @@ void usage(void)
 int main(int argc, char **argv)
 {
 	int i;
-	int c;
 	int trace = 0;
 	int line = 0;
 	int quiet = 0;
+	int no_repl = 0;
 	const char *header_name = NULL;
 	const char *fname_load = NULL;
+	/* Files and -e words in command-line order; is_word marks the -e ones */
+	const char **run = calloc((size_t)argc + 1, sizeof(*run));
+	char *is_word = calloc((size_t)argc + 1, 1);
+	int nrun = 0;
 
-	/* Parse command line options */
+	if(run == NULL || is_word == NULL) {
+		fprintf(stderr, "out of memory\n");
+		return 1;
+	}
 
-	while((c = getopt(argc, argv, "hH:l:tq")) != -1) {
-		switch(c) {
-			case 'H':
-				header_name = optarg;
+	/* Parse command line options. Options may appear anywhere; -e words
+	 * and files keep their relative order. */
+
+	for(i = 1; i < argc; i++) {
+		const char *a = argv[i];
+		if(strcmp(a, "--") == 0) {
+			for(i++; i < argc; i++) run[nrun++] = argv[i];
+			break;
+		}
+		if(a[0] != '-' || a[1] == '\0' || a[2] != '\0') {
+			run[nrun++] = a;
+			continue;
+		}
+		switch(a[1]) {
+			case 'H': case 'l': case 'e':
+				if(i + 1 >= argc) {
+					usage();
+					return 1;
+				}
+				if(a[1] == 'H') header_name = argv[++i];
+				else if(a[1] == 'l') fname_load = argv[++i];
+				else { is_word[nrun] = 1; run[nrun++] = argv[++i]; }
 				break;
 			case 't':
 				trace = 1;
 				break;
-			case 'l':
-				fname_load = optarg;
+			case 'q':
+				quiet = 1;
+				break;
+			case 'x':
+				no_repl = 1;
 				break;
 			case 'h':
 				usage();
 				exit(0);
-			case 'q':
-				quiet = 1;
-				break;
+			default:
+				usage();
+				return 1;
 		}
 	}
-	
-	argc -= optind;
-	argv += optind;
 
 	zf_ctx *ctx = malloc(sizeof(zf_ctx));
 
@@ -635,15 +811,27 @@ int main(int argc, char **argv)
 
 	/* Include files from command line */
 
-	for(i=0; i<argc; i++) {
-		include(ctx, argv[i]);
+	for(i = 0; i < nrun; i++) {
+		if(is_word[i]) {
+			if(do_eval(ctx, "-e", 1, run[i]) != ZF_OK) had_error = 1;
+		} else {
+			include(ctx, run[i]);
+		}
 	}
+	free(run);
+	free(is_word);
 
 	if(header_name) {
 		emit_header(ctx, header_name);
 		zf_free(ctx);
 		free(ctx);
-		return 0;
+		return had_error;
+	}
+
+	if(no_repl) {
+		zf_free(ctx);
+		free(ctx);
+		return had_error;
 	}
 
 	if(!quiet) {
@@ -690,7 +878,7 @@ int main(int argc, char **argv)
 
 	zf_free(ctx);
 	free(ctx);
-	return 0;
+	return had_error;
 }
 
 

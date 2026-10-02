@@ -42,6 +42,94 @@ include forth/float.zf
 include forth/double.zf
 include forth/dfloat.zf
 
+( Standard Forth names for words zForth spells differently, and other
+  common words that were missing )
+: nip    swap drop ;
+: tuck   swap over ;
+: -rot   rot rot ;
+: r@     1 pickr ;
+: rdrop  r> r> drop >r ;
+: negate 0 swap - ;
+: abs    dup <0 if negate fi ;
+: invert -1 ^ ;
+: and & ; : or | ; : xor ^ ;
+: mod % ;
+: lshift << ;
+: 0= =0 ; : 0< <0 ; : 0<> 0 = not ; : 0> 0 > ;
+: <> != ;
+: c@ @u8 ; : c! !u8 ; : c, ,u8 ;
+: type tell ;
+: then postpone fi ; immediate
+
+( abort, a primitive, stops the running code as an error would: zf_eval
+  returns ZF_ABORT_USER. )
+
+( begin cond while body repeat: loop while cond is true. move and fill
+  are primitives: src dst n move copies n bytes, overlap allowed; addr n
+  byte fill sets n bytes. cmove is move. )
+: while  postpone if swap ; immediate
+: repeat postpone again postpone fi ; immediate
+: cmove move ;
+
+( Strings as addr len. compare gives -1, 0 or 1 comparing bytes as
+  unsigned, a shorter prefix sorting first. str= is true if equal. )
+: str= ( a1 n1 a2 n2 -- f )
+  rot over != if drop 2drop 0 exit fi
+  3 locals 0 begin dup 2 l@ < while
+    dup 0 l@ + @u8 over 1 l@ + @u8 != if drop 0 endlocals exit fi 1+
+  repeat drop -1 endlocals ;
+: compare ( a1 n1 a2 n2 -- n )
+  4 locals 0 begin dup 1 l@ < over 3 l@ < & while
+    dup 0 l@ + @u8 over 2 l@ + @u8 2dup != if u< if -1 else 1 fi nip endlocals exit fi
+    2drop 1+
+  repeat drop 1 l@ 3 l@ 2dup < if 2drop -1 else > if 1 else 0 fi fi endlocals ;
+
+( 64-bit bitwise operations and shifts on double cells. The shift count is
+  a single cell; counts of 64 or more give 0, or -1 for darshift of a
+  negative number. )
+: d& rot & >r & r> ;
+: d| rot | >r | r> ;
+: d^ rot ^ >r ^ r> ;
+: dinvert invert swap invert swap ;
+: dlshift ( lo hi n -- lo hi )
+  dup 64 u< not if drop 2drop 0 0 exit fi
+  dup 32 u< not if 32 - nip << 0 swap exit fi
+  dup =0 if drop exit fi
+  3 locals 1 l@ 2 l@ << 0 l@ 32 2 l@ - rshift | 0 l@ 2 l@ << swap endlocals ;
+: drshift ( lo hi n -- lo hi )
+  dup 64 u< not if drop 2drop 0 0 exit fi
+  dup 32 u< not if 32 - rshift nip 0 exit fi
+  dup =0 if drop exit fi
+  3 locals 0 l@ 2 l@ rshift 1 l@ 32 2 l@ - << | 1 l@ 2 l@ rshift endlocals ;
+: darshift ( lo hi n -- lo hi )
+  dup 64 u< not if drop nip <0 dup exit fi
+  dup 32 u< not if 32 - >> nip dup <0 exit fi
+  dup =0 if drop exit fi
+  3 locals 0 l@ 2 l@ rshift 1 l@ 32 2 l@ - << | 1 l@ 2 l@ >> endlocals ;
+
+( Conversions between unsigned or 64-bit integers and floats. Conversions
+  to integers truncate toward zero and saturate; out-of-range results are
+  unspecified, as in Go. Go through doubles, which hold any 32-bit value.
+  d>f and ud>f, 64-bit integers to single floats, are primitives so they
+  round only once. )
+: u>df  0 d>df ;
+: f>u   f>df df>d drop ;
+: df>u  df>d drop ;
+: f>d   f>df df>d ;
+: ud>df ( ud -- df ) dup <0 if
+    over 1 & >r 1 drshift swap r> | swap d>df 2dup df+
+  else d>df fi ;
+: df>ud ( df -- ud ) 2dup 9.223372036854775808d18 df< if df>d else
+    9.223372036854775808d18 df- df>d 0x80000000 | fi ;
+: f>ud  f>df df>ud ;
+
+( Host services: n ms waits n milliseconds; millis gives milliseconds since
+  start as an unsigned double cell; fmt-buf formats into a buffer:
+  buf-addr buf-len args... fmt-addr fmt-len fmt-buf gives bytes written. )
+: fmt-buf 133 sys ;
+: ms      134 sys ;
+: millis  135 sys ;
+
 ( Reserve writable storage, usage: 16 buffer: name - name pushes the buffer
   address. Use this instead of here n allot so the buffer stays writable when
   this file is baked into a ROM image. Contents are not cleared. )

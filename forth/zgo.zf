@@ -1,0 +1,87 @@
+( ZGo runtime support: words used by the code zgoc generates. Load after
+  bs.zf. See ZGO_PLAN.md and LANGUAGE.md. )
+
+( Jump labels. zgoc numbers the labels of each function, reusing numbers
+  once a construct is closed, and emits:
+    znew N     start label N with no references, before its first use
+    zgoto N    jump to label N
+    zgoto0 N   jump to label N if the top of the stack is zero
+    zlabel N   put label N here
+  A jump to a label not yet placed is linked into a chain through the jump
+  cells themselves, written with ,j so they can be patched, and resolved
+  by zlabel. A placed label is stored negated, so later jumps go straight
+  back to it. The numbers are read from the source with key, since these
+  words run while a definition is being compiled. The table is only used
+  while compiling. )
+32 cells buffer: zlabels
+: znum ( -- n ) 0 begin key dup 47 > while 48 - swap 10 * + repeat drop ;
+: zlab ( -- addr ) znum 32 ?bounds cells zlabels + ;
+: znew zlab 0 swap !c ; immediate
+: (zgoto) ( prim -- ) , zlab dup @c
+  dup <0 if negate ,j drop exit fi
+  here >r ,j r> swap !c ;
+: zgoto ' jmp (zgoto) ; immediate
+: zgoto0 ' jmp0 (zgoto) ; immediate
+: zlabel zlab dup @c begin dup 0 > while dup @ >r here swap !j r> repeat
+  drop here negate swap !c ; immediate
+
+( String literals with Go escapes: z" a\tb\n" compiles the bytes exactly,
+  so UTF-8 is kept. Escapes: \n \t \r \" \\ \xHH; any other escaped
+  character stands for itself. Compiled, it pushes addr len at run time;
+  interpreted, it stores the bytes at here and pushes addr len. )
+: zhex ( c -- n ) dup 57 > if 32 | 87 - else 48 - fi ;
+: zesc ( c -- b )
+  dup 110 = if drop 10 exit fi
+  dup 116 = if drop 9 exit fi
+  dup 114 = if drop 13 exit fi
+  dup 120 = if drop key zhex 4 << key zhex | exit fi ;
+: z" compiling @ if ' lits , here 0 ,j fi here
+  begin key dup 34 = if drop
+      compiling @ if here swap - swap !j else dup here swap - fi exit fi
+    dup 92 = if drop key zesc fi ,u8
+  again ; immediate
+
+( Printing a bool with %t or %v )
+: zbool ( f -- addr len ) if z" true" else z" false" fi ;
+
+( Slicing: addr len lo hi size zslice gives the view of elements lo to
+  hi-1, aborting unless 0 <= lo <= hi <= len )
+: zslice ( addr len lo hi size -- addr len )
+  5 locals 3 l@ 1 l@ 1+ ?bounds drop 2 l@ 3 l@ 1+ ?bounds drop
+  0 l@ 2 l@ 4 l@ * + 3 l@ 2 l@ - endlocals ;
+
+( Go's copy: dst-addr dst-len src-addr src-len size zcopy copies
+  min dst-len src-len elements and gives that count )
+: zcopy ( daddr dlen saddr slen size -- n )
+  5 locals 1 l@ 3 l@ min 2 l@ 0 l@ 2 pick 4 l@ * move endlocals ;
+
+( A 64-bit shift count as a single cell: counts that don't fit become -1,
+  which every shift word treats as too large )
+: zcnt ( lo hi -- n ) if drop -1 fi ;
+
+( Indirect call: xt zexec calls the word. Used by the call stubs of
+  mutually recursive functions. The return address is patched with !j, so
+  it can't change size, unlike exe in core.zf. )
+: zexec ' lit , here 0 ,j ' >r , ' >r , ' exit , here swap !j ; immediate
+
+( UTF-8 decoding for range over a string: addr len i zrune gives the rune
+  starting at byte i and its size in bytes. An invalid or truncated
+  sequence gives U+FFFD and size 1, as in Go. )
+: zrune ( addr len i -- rune size )
+  3 5 frame
+  0 l@ 2 l@ + @u8
+  dup 128 < if 1 endlocals exit fi
+  dup 0xC2 < over 0xF4 > | if drop 0xFFFD 1 endlocals exit fi
+  dup 0xE0 < if 31 & 2 else dup 0xF0 < if 15 & 3 else 7 & 4 fi fi
+  4 l! 3 l!
+  2 l@ 4 l@ + 1 l@ > if 0xFFFD 1 endlocals exit fi
+  1 begin dup 4 l@ < while
+    0 l@ 2 l@ + over + @u8
+    dup 0xC0 & 0x80 != if 2drop 0xFFFD 1 endlocals exit fi
+    63 & 3 l@ 6 << | 3 l!
+    1+
+  repeat drop
+  3 l@
+  4 l@ 3 = if dup 0x800 < over 0xD800 >= 2 pick 0xDFFF <= & | if drop 0xFFFD 1 endlocals exit fi fi
+  4 l@ 4 = if dup 0x10000 < over 0x10FFFF > | if drop 0xFFFD 1 endlocals exit fi fi
+  4 l@ endlocals ;

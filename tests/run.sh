@@ -9,6 +9,7 @@
 echo "building test binaries with $CC"
 build_ram "$BUILD/asan" "$SAN_ASAN" &&
 build_image "$BUILD/asan/stock" "$SAN_ASAN" "" &&
+build_image "$BUILD/asan/zgo" "$SAN_ASAN" "" forth/zgo.zf &&
 build_ram "$BUILD/ubsan" "$SAN_UBSAN" || { echo "build failed"; exit 1; }
 
 status=0
@@ -17,10 +18,11 @@ for s in tests/suites/*.sh; do
 done
 echo "-- again under UBSan (RAM build)"
 for s in tests/suites/*.sh; do
-	ZF_TEST_BINS="$BUILD/ubsan/zforth forth/bs.zf" bash "$s" || status=1
+	ZF_TEST_BINS="$BUILD/ubsan/zforth forth/bs.zf" ZF_ZGO_BINS="$BUILD/ubsan/zforth forth/bs.zf forth/zgo.zf" bash "$s" || status=1
 done
 echo "--"
 bash tests/images.sh || status=1
+bash tests/host.sh || status=1
 bash tests/limits.sh || status=1
 bash tests/configs.sh || status=1
 
