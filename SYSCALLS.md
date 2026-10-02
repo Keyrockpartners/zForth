@@ -18,7 +18,9 @@ Syscalls that take an `( addr len )` pair must resolve it with `zf_dict_addr(ctx
 
 `zforth -H NAME file.zf...` emits `NAME[]`, `NAME_len`, and `NAME_data_len`. The array is the dictionary image followed by the initial contents of the data window (its last `NAME_data_len` bytes). Pass all three unchanged to `zf_dict_mount_rom()` (ROM builds) or `zf_dict_import_with_data()`.
 
-Variables defined with `var`/`variable` (or storage from `data-here`/`data-allot`) during export get their storage in the data window, which is copied to RAM at mount time, so they stay writable when the image is in flash. Anything else written into the dictionary at export time — e.g. a buffer made with `here N allot` — is part of the read-only image and aborts with `outside memory` if written at runtime.
+Variables defined with `var`/`variable`, buffers made with `N buffer: name`, and other storage from `data-here`/`data-allot` get their storage in the data window during export. The window is copied to RAM at mount time, so they stay writable when the image is in flash. Anything else written into the dictionary at export time — e.g. a buffer made with `here N allot` — is part of the read-only image and aborts with `outside memory` if written at runtime.
+
+A checkpoint compiled into the image (e.g. `chkpt base` at the end of a script) can be used at runtime to drop everything defined since mount; new definitions then start right after the data window.
 
 ## Required BlueStreak user syscalls
 

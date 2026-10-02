@@ -285,6 +285,11 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	dict_get_bytes(ctx, addr, &cp, sizeof(cp));
 	CHECK(ctx, dict_has_range(ctx, cp.here, 0), ZF_ABORT_OUTSIDE_MEM);
 	CHECK(ctx, cp.latest <= cp.here, ZF_ABORT_INTERNAL_ERROR);
+	/* A checkpoint compiled into a prebuilt image points into the image
+	 * itself; new definitions start after it and its data window instead */
+	if(cp.here < ctx->data_base + ctx->data_len) {
+		cp.here = ctx->data_base + ctx->data_len;
+	}
 	ext_owner_prune_from(ctx, cp.here);
 	HERE(ctx) = cp.here;
 	LATEST(ctx) = cp.latest;

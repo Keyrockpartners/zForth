@@ -19,5 +19,14 @@ include forth/memaccess.zf
 : round 135 sys ;
 : trunc 136 sys ;
 
+( Reserve writable storage, usage: 16 buffer: name - name pushes the buffer
+  address. Use this instead of here n allot so the buffer stays writable when
+  this file is baked into a ROM image. Contents are not cleared. )
+: buffer: data-here swap data-allot constant ;
+
+( Keep this last: running base drops everything defined after this point,
+  e.g. a downloaded script, and empties the stacks. )
+chkpt base
+
 
 
