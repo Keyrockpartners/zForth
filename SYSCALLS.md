@@ -18,6 +18,17 @@ The pointer from `zf_dict_addr()` is only valid until the dictionary is next wri
 
 Device builds should call `zf_init_checked()` (not `zf_init()`) and check the result of `zf_dict_mount_rom()`. Both return `ZF_ABORT_OUTSIDE_MEM` on allocation failure instead of aborting. The writable dictionary is capped at `ZF_DICT_MAX_SIZE` bytes (default 32 KB, not counting a mounted ROM image), which can be changed at runtime with `zf_dict_set_limit()`. A script that hits the cap aborts with `outside memory`; the rest of the firmware's heap is unaffected.
 
+## Required host callbacks
+
+Besides `zf_host_sys()`, which dispatches the syscalls in this document, the host must provide:
+
+| Function | Required | Behavior |
+| --- | --- | --- |
+| `zf_cell zf_host_parse_num(zf_ctx *ctx, const char *buf)` | Yes | Called by `zf_eval()` for every token that is not a known word, both when interpreting (the number is pushed) and when compiling (it is compiled as a literal). Parse the whole token as a number and return it, or call `zf_abort(ctx, ZF_ABORT_NOT_A_WORD)` if it is not one. Not needed for the prebuilt ROM image, whose numbers were parsed at export time, but needed for any script source evaluated on the device. |
+| `void zf_host_trace(zf_ctx *ctx, const char *fmt, va_list va)` | Only with `ZF_ENABLE_TRACE` | Output trace text. Tracing is off by default on device builds. |
+
+`zf_host_parse_num()` defines what number syntax scripts can use. The Linux version (`src/linux/main.c`) uses `sscanf` with `ZF_SCAN_FMT` (`%lf`) and requires the whole token to be consumed, so it accepts forms like `42`, `-3.5`, `1e3`, and `0x1F`. Device implementations should accept the same forms so scripts behave the same on both.
+
 ## Prebuilt dictionaries
 
 `zforth -H NAME file.zf...` emits `NAME[]`, `NAME_len`, and `NAME_data_len`. The array is the dictionary image followed by the initial contents of the data window (its last `NAME_data_len` bytes). Pass all three unchanged to `zf_dict_mount_rom()` (ROM builds) or `zf_dict_import_with_data()`.
