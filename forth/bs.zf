@@ -9,15 +9,24 @@ include forth/memaccess.zf
 : 2dup over over ;
 : 2swap rot >r rot r> ;
 : 2over 3 pick 3 pick ;
+: cells cell * ;
 : max  over over < if swap fi drop ;
 : min  over over > if swap fi drop ;
 : log" compiling @ if postpone s" ' tell , else here postpone s" tell h ! fi ; immediate
 : fmt 132 sys ;
 : fmt" compiling @ if postpone s" ' fmt , else here >r postpone s" fmt r> h ! fi ; immediate
-: floor 133 sys ;
-: ceil 134 sys ;
-: round 135 sys ;
-: trunc 136 sys ;
+
+( Unsigned words; u< rshift u/ umod are primitives )
+: u. s" %u " fmt ;
+: u>  swap u< ;
+: u<= u> not ;
+: u>= u< not ;
+: umin over over u> if swap fi drop ;
+: umax over over u< if swap fi drop ;
+
+include forth/float.zf
+include forth/double.zf
+include forth/dfloat.zf
 
 ( Reserve writable storage, usage: 16 buffer: name - name pushes the buffer
   address. Use this instead of here n allot so the buffer stays writable when

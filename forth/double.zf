@@ -1,0 +1,39 @@
+( 64-bit numbers as double cells: two stack entries, the low cell below the
+  high cell, as in standard Forth. A number ending in a dot is a double
+  literal: 1700000000000. -5. 0xFFFFFFFFFFFFFFFF. - a dot with digits after
+  it, like 1.5, is a float.
+  Signed and unsigned: d+ d- ud* d= d0= 2@ 2! 2constant 2variable d>s
+  Signed: d< d> d<= d>= dmin dmax d0< m* d/ dmod dnegate dabs s>d d.
+  Unsigned: du< du> du<= du>= dumin dumax um* ud/ udmod u>d ud.
+  Primitives: d+ d- d< du< m* um* ud* d/ dmod ud/ udmod. )
+
+: s>d dup <0 ;
+: u>d 0 ;
+: d>s drop ;
+: d= rot = >r = r> & ;
+: d0= | =0 ;
+: d0< swap drop <0 ;
+: dnegate 0 0 2swap d- ;
+: dabs dup <0 if dnegate fi ;
+
+: d> 2swap d< ;
+: d<= d> not ;
+: d>= d< not ;
+: dmin 2over 2over d> if 2swap fi 2drop ;
+: dmax 2over 2over d< if 2swap fi 2drop ;
+: d. s" %D " fmt ;
+
+: du> 2swap du< ;
+: du<= du> not ;
+: du>= du< not ;
+: dumin 2over 2over du> if 2swap fi 2drop ;
+: dumax 2over 2over du< if 2swap fi 2drop ;
+: ud. s" %U " fmt ;
+
+( Double-cell memory, using fixed cell-size access. As in standard Forth, 2!
+  stores the high cell at addr and the low cell at the next cell. 2variable
+  is zero-initialized and stays writable in a ROM image. )
+: 2! swap over !c cell + !c ;
+: 2@ dup cell + @c swap @c ;
+: 2constant >r >r : r> postpone literal r> postpone literal postpone ; ;
+: 2variable data-here 2 cells data-allot 0 0 2 pick 2! constant ;

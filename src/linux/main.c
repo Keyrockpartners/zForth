@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <math.h>
 #include <ctype.h>
+#include <inttypes.h>
 
 #ifdef USE_READLINE
 #include <readline/readline.h>
@@ -279,7 +280,7 @@ static void emit_header(zf_ctx *ctx, const char *name)
 
 static const uint8_t *checked_dict_range(zf_ctx *ctx, zf_cell addr, zf_cell len)
 {
-	if(!(addr >= 0) || !(len >= 0) || addr > (zf_addr)-1 || len > (zf_addr)-1) {
+	if(addr < 0 || len < 0) {
 		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
 	}
 	return (const uint8_t *)zf_dict_addr(ctx, (zf_addr)addr, (size_t)len);
@@ -296,9 +297,14 @@ static void fmt_syscall(zf_ctx *ctx)
 	for(size_t i = 0; i < fmt_len; i++) {
 		if(fmt[i] == '%' && i + 1 < fmt_len) {
 			switch(fmt[++i]) {
-				case 's': cells += 2; break;
+				case 's':
+				case 'U':
+				case 'D':
+				case 'F': cells += 2; break;
 				case 'd':
 				case 'n':
+				case 'u':
+				case 'f':
 				case 'c': cells += 1; break;
 				default: break;
 			}
@@ -334,6 +340,30 @@ static void fmt_syscall(zf_ctx *ctx)
 			case 'n':
 				printf(ZF_CELL_FMT, args[ai--]);
 				break;
+			case 'u':
+				printf("%" PRIu32, (uint32_t)args[ai--]);
+				break;
+			case 'f':
+				printf("%g", (double)zf_cell_to_float(args[ai--]));
+				break;
+			case 'U': {
+				uint64_t lo = (zf_ucell)args[ai--];
+				uint64_t hi = (zf_ucell)args[ai--];
+				printf("%" PRIu64, (hi << 32) | lo);
+				break;
+			}
+			case 'D': {
+				uint64_t lo = (zf_ucell)args[ai--];
+				uint64_t hi = (zf_ucell)args[ai--];
+				printf("%" PRId64, (int64_t)((hi << 32) | lo));
+				break;
+			}
+			case 'F': {
+				zf_cell lo = args[ai--];
+				zf_cell hi = args[ai--];
+				printf("%.15g", zf_cells_to_dfloat(lo, hi));
+				break;
+			}
 			case 'c':
 				putchar((char)args[ai--]);
 				break;
@@ -391,7 +421,7 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 			break;
 
 		case ZF_SYSCALL_USER + 1:
-			zf_push(ctx, sin(zf_pop(ctx)));
+			zf_push(ctx, zf_float_to_cell(sinf(zf_cell_to_float(zf_pop(ctx)))));
 			break;
 
 		case ZF_SYSCALL_USER + 2:
@@ -407,22 +437,6 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 
 		case ZF_SYSCALL_USER + 4:
 			fmt_syscall(ctx);
-			break;
-
-		case ZF_SYSCALL_USER + 5:
-			zf_push(ctx, floor(zf_pop(ctx)));
-			break;
-
-		case ZF_SYSCALL_USER + 6:
-			zf_push(ctx, ceil(zf_pop(ctx)));
-			break;
-
-		case ZF_SYSCALL_USER + 7:
-			zf_push(ctx, round(zf_pop(ctx)));
-			break;
-
-		case ZF_SYSCALL_USER + 8:
-			zf_push(ctx, trunc(zf_pop(ctx)));
 			break;
 
 		default:
@@ -453,9 +467,7 @@ void zf_host_trace(zf_ctx *ctx, const char *fmt, va_list va)
 zf_cell zf_host_parse_num(zf_ctx *ctx, const char *buf)
 {
 	zf_cell v;
-	int n = 0;
-	int r = sscanf(buf, ZF_SCAN_FMT"%n", &v, &n);
-	if(r != 1 || buf[n] != '\0') {
+	if(!zf_parse_num(buf, &v)) {
 		zf_abort(ctx, ZF_ABORT_NOT_A_WORD);
 	}
 	return v;

@@ -37,6 +37,18 @@ extern "C"
 #define ZF_DICT_MAX_SIZE 0
 #endif
 
+#ifndef ZF_ENABLE_FLOAT
+#define ZF_ENABLE_FLOAT 0
+#endif
+
+#ifndef ZF_ENABLE_DOUBLE_CELL
+#define ZF_ENABLE_DOUBLE_CELL 0
+#endif
+
+#ifndef ZF_ENABLE_DFLOAT
+#define ZF_ENABLE_DFLOAT 0
+#endif
+
 /* Abort reasons */
 
 typedef enum {
@@ -165,6 +177,28 @@ zf_cell zf_pick(zf_ctx *ctx, zf_addr n);
 
 zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v);
 zf_result zf_uservar_get(zf_ctx *ctx, zf_uservar_id uv, zf_cell *v);
+
+/* Parse a single-cell number token the standard way: decimal or 0x hex
+ * integers from -2147483648 to 4294967295 (values above 2147483647 wrap to
+ * negative), and, with ZF_ENABLE_FLOAT, floats for tokens containing '.', 'e'
+ * or 'E'. A token ending in '.' is not a float: with ZF_ENABLE_DOUBLE_CELL the
+ * interpreter reads it as a double-cell literal before calling
+ * zf_host_parse_num(), and likewise a double float with a d exponent (1.5d0)
+ * with ZF_ENABLE_DFLOAT. Returns 1 and sets *v on success, 0 if buf is not a
+ * number. zf_host_parse_num() can simply call this. */
+int zf_parse_num(const char *buf, zf_cell *v);
+
+#if ZF_ENABLE_FLOAT
+/* Convert between a float and the cell holding its bit pattern */
+zf_cell zf_float_to_cell(float f);
+float zf_cell_to_float(zf_cell v);
+#endif
+
+#if ZF_ENABLE_DFLOAT
+/* Convert between a double and the two cells ( lo hi ) holding its bits */
+double zf_cells_to_dfloat(zf_cell lo, zf_cell hi);
+void zf_dfloat_to_cells(double v, zf_cell *lo, zf_cell *hi);
+#endif
 
 /* Host provides these functions */
 

@@ -1,10 +1,30 @@
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
 
 #include "zforth.h"
+
+#if ZF_ENABLE_FLOAT || ZF_ENABLE_DFLOAT
+#include <math.h>
+#endif
+
+/* zf_cell must be a signed integer type and zf_ucell its unsigned counterpart */
+typedef char zf_cell_must_be_signed_integer[((zf_cell)0.5 == 0 && (zf_cell)-1 < 0) ? 1 : -1];
+typedef char zf_ucell_must_match_cell[(sizeof(zf_ucell) == sizeof(zf_cell) && (zf_ucell)-1 > 0) ? 1 : -1];
+#if ZF_ENABLE_FLOAT
+typedef char zf_float_must_fit_cell[(sizeof(float) == sizeof(zf_cell)) ? 1 : -1];
+#endif
+#if ZF_ENABLE_DOUBLE_CELL
+typedef char zf_double_cell_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t)) ? 1 : -1];
+#endif
+#if ZF_ENABLE_DFLOAT
+typedef char zf_dfloat_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t) && sizeof(double) == sizeof(uint64_t)) ? 1 : -1];
+#endif
+
+#define ZF_CELL_BITS ((zf_cell)(sizeof(zf_cell) * 8))
 
 
 /* Allocation hooks for the dynamic dictionary; override in zfconf.h to choose
@@ -61,6 +81,24 @@ typedef enum {
 	PRIM_EQUAL,   PRIM_SYS,       PRIM_PICK, PRIM_COMMA,   PRIM_KEY,      PRIM_LITS,
 	PRIM_LEN,     PRIM_AND,       PRIM_OR,   PRIM_XOR,     PRIM_SHL,      PRIM_SHR,
 	PRIM_LITERAL, PRIM_CHECKPOINT, PRIM_RESTORE, PRIM_DATA_HERE, PRIM_DATA_ALLOT,
+	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,
+#if ZF_ENABLE_DOUBLE_CELL
+	PRIM_DADD,    PRIM_DSUB,      PRIM_DULT, PRIM_UMSTAR,  PRIM_UDSTAR,   PRIM_UDDIV,
+	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,
+#endif
+#if ZF_ENABLE_FLOAT
+	PRIM_FADD,    PRIM_FSUB,      PRIM_FMUL, PRIM_FDIV,    PRIM_FLT,      PRIM_FEQ,
+	PRIM_STOF,    PRIM_UTOF,      PRIM_FTOS, PRIM_FSQRT,   PRIM_FFLOOR,   PRIM_FCEIL,
+	PRIM_FROUND,  PRIM_FTRUNC,
+#endif
+#if ZF_ENABLE_DFLOAT
+	PRIM_DFADD,   PRIM_DFSUB,     PRIM_DFMUL, PRIM_DFDIV,  PRIM_DFLT,     PRIM_DFEQ,
+	PRIM_STODF,   PRIM_DFTOS,     PRIM_DTODF, PRIM_DFTOD,  PRIM_DFSQRT,   PRIM_DFFLOOR,
+	PRIM_DFCEIL,  PRIM_DFROUND,   PRIM_DFTRUNC,
+#if ZF_ENABLE_FLOAT
+	PRIM_FTODF,   PRIM_DFTOF,
+#endif
+#endif
 	PRIM_COUNT
 } zf_prim;
 
@@ -72,7 +110,26 @@ static const char prim_names[] =
 	_("jmp")     _("jmp0")       _("'")     _("_(")    _(">r")        _("r>")
 	_("=")       _("sys")        _("pick")  _(",,")    _("key")       _("lits")
 	_("##")      _("&")          _("|")     _("^")     _("<<")        _(">>")
-	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot");
+	_("_literal") _("chkpt!") _("chkpt-restore") _("data-here") _("data-allot")
+	_("u<")      _("rshift")     _("u/")    _("umod")
+#if ZF_ENABLE_DOUBLE_CELL
+	_("d+")      _("d-")         _("du<")   _("um*")   _("ud*")       _("ud/")
+	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")
+#endif
+#if ZF_ENABLE_FLOAT
+	_("f+")      _("f-")         _("f*")    _("f/")    _("f<")        _("f=")
+	_("s>f")     _("u>f")        _("f>s")   _("fsqrt") _("ffloor")    _("fceil")
+	_("fround")  _("ftrunc")
+#endif
+#if ZF_ENABLE_DFLOAT
+	_("df+")     _("df-")        _("df*")   _("df/")   _("df<")       _("df=")
+	_("s>df")    _("df>s")       _("d>df")  _("df>d")  _("dfsqrt")    _("dffloor")
+	_("dfceil")  _("dfround")    _("dftrunc")
+#if ZF_ENABLE_FLOAT
+	_("f>df")    _("df>f")
+#endif
+#endif
+	;
 #endif
 
 typedef struct {
@@ -895,7 +952,7 @@ static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 static void allot_addr(zf_ctx *ctx, zf_addr *addr, zf_cell delta)
 {
 	if(delta < 0) {
-		zf_addr n = (zf_addr)(-delta);
+		zf_addr n = (zf_addr)(0 - (zf_ucell)delta);
 		CHECK(ctx, *addr >= n, ZF_ABORT_OUTSIDE_MEM);
 		*addr -= n;
 	} else {
@@ -910,11 +967,158 @@ static void allot_addr(zf_ctx *ctx, zf_addr *addr, zf_cell delta)
  * Run primitive opcode
  */
 
+#if ZF_ENABLE_DOUBLE_CELL || ZF_ENABLE_DFLOAT
+/* Two-cell values are ( lo hi ): the high cell is on top of the stack */
+static uint64_t zf_popud(zf_ctx *ctx)
+{
+	uint64_t hi = (zf_ucell)zf_pop(ctx);
+	uint64_t lo = (zf_ucell)zf_pop(ctx);
+	return (hi << 32) | lo;
+}
+
+static void zf_pushud(zf_ctx *ctx, uint64_t v)
+{
+	zf_push(ctx, (zf_cell)(zf_ucell)v);
+	zf_push(ctx, (zf_cell)(zf_ucell)(v >> 32));
+}
+
+/* Push a two-cell literal, or compile it as two literals */
+static void push_or_compile_ud(zf_ctx *ctx, uint64_t v)
+{
+	if(COMPILING(ctx)) {
+		dict_add_lit(ctx, (zf_cell)(zf_ucell)v);
+		dict_add_lit(ctx, (zf_cell)(zf_ucell)(v >> 32));
+	} else {
+		zf_pushud(ctx, v);
+	}
+}
+#endif
+
+#if ZF_ENABLE_DFLOAT
+static double zf_popdf(zf_ctx *ctx)
+{
+	uint64_t u = zf_popud(ctx);
+	double v;
+	memcpy(&v, &u, sizeof(v));
+	return v;
+}
+
+static void zf_pushdf(zf_ctx *ctx, double v)
+{
+	uint64_t u;
+	memcpy(&u, &v, sizeof(u));
+	zf_pushud(ctx, u);
+}
+
+/* Truncate toward zero, saturating out-of-range values and mapping NaN to 0 */
+static zf_cell dfloat_to_cell_int(double v)
+{
+	if(v != v) return 0;
+	if(v >= 2147483648.0) return (zf_cell)0x7fffffff;
+	if(v < -2147483648.0) return (zf_cell)(-0x7fffffff - 1);
+	return (zf_cell)v;
+}
+
+static int64_t dfloat_to_int64(double v)
+{
+	if(v != v) return 0;
+	if(v >= 9223372036854775808.0) return INT64_MAX;
+	if(v < -9223372036854775808.0) return INT64_MIN;
+	return (int64_t)v;
+}
+
+/* Parse a double float literal: a decimal float with a d or D exponent in
+ * place of e, as in Fortran (e.g. 1.5d0 6.02d23 -2.25d-3 1d6). Returns 0 if
+ * buf is not one. */
+static int parse_dfloat_literal(const char *buf, double *v)
+{
+	char tmp[sizeof(((zf_ctx *)0)->read_buf) + 1];
+	const char *p = buf;
+	char *d, *end;
+	size_t len = strlen(buf);
+
+	if(len >= sizeof(tmp)) return 0;
+	if(*p == '-' || *p == '+') p++;
+	if(!isdigit((unsigned char)*p) && !(*p == '.' && isdigit((unsigned char)p[1]))) return 0;
+	if(p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) return 0;
+	memcpy(tmp, buf, len + 1);
+	d = strpbrk(tmp, "dD");
+	if(d == NULL || strpbrk(tmp, "eE") != NULL || strpbrk(d + 1, "dD") != NULL) return 0;
+	if(!isdigit((unsigned char)d[1]) &&
+	   !((d[1] == '-' || d[1] == '+') && isdigit((unsigned char)d[2]))) return 0;
+	*d = 'e';
+	*v = strtod(tmp, &end);
+	return end != tmp && *end == '\0';
+}
+#endif
+
+#if ZF_ENABLE_DOUBLE_CELL
+
+/* Parse a double-cell literal: an optionally signed decimal or 0x hex number
+ * followed by a final '.', as in standard Forth (e.g. 123. -5. or 0xFF.),
+ * from -2^63 to 2^64-1. Returns 0 if buf is not one. */
+static int parse_double_literal(const char *buf, uint64_t *v)
+{
+	const char *p = buf;
+	char *end;
+	unsigned long long n;
+	int neg = 0, hex;
+
+	if(*p == '-' || *p == '+') {
+		neg = *p == '-';
+		p++;
+	}
+	if(!isdigit((unsigned char)*p)) return 0;
+	hex = p[0] == '0' && (p[1] == 'x' || p[1] == 'X');
+	errno = 0;
+	n = strtoull(p, &end, hex ? 16 : 10);
+	if(end[0] != '.' || end[1] != '\0' || errno == ERANGE) return 0;
+	if(neg) {
+		if(n > (1ULL << 63)) return 0;
+		n = 0 - n;
+	}
+	*v = (uint64_t)n;
+	return 1;
+}
+#endif
+
+#if ZF_ENABLE_FLOAT
+static float zf_popf(zf_ctx *ctx)
+{
+	return zf_cell_to_float(zf_pop(ctx));
+}
+
+static void zf_pushf(zf_ctx *ctx, float f)
+{
+	zf_push(ctx, zf_float_to_cell(f));
+}
+
+/* Truncate toward zero, saturating out-of-range values and mapping NaN to 0
+ * (a plain C conversion is undefined for those) */
+static zf_cell float_to_cell_int(float f)
+{
+	if(f != f) return 0;
+	if(f >= 2147483648.0f) return (zf_cell)0x7fffffff;
+	if(f < -2147483648.0f) return (zf_cell)(-0x7fffffff - 1);
+	return (zf_cell)f;
+}
+#endif
+
 static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 {
 	zf_cell d1, d2, d3;
 	zf_addr addr, code;
 	zf_mem_size size;
+#if ZF_ENABLE_DOUBLE_CELL
+	uint64_t u1, u2;
+	int64_t n1, n2;
+#endif
+#if ZF_ENABLE_DFLOAT
+	double g1, g2;
+#endif
+#if ZF_ENABLE_FLOAT
+	float f1, f2;
+#endif
 
 	trace(ctx, "(%s) ", op_name(ctx, op));
 
@@ -1042,7 +1246,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		case PRIM_ADD:
 			/* Pop and add top two elements on stack */
 			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
-			zf_push(ctx, d1 + d2);
+			zf_push(ctx, (zf_cell)((zf_ucell)d1 + (zf_ucell)d2));
 			break;
 
 		case PRIM_SYS:
@@ -1069,12 +1273,13 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		case PRIM_SUB:
 			/* Subtract top element on stack from next element */
 			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
-			zf_push(ctx, d2 - d1);
+			zf_push(ctx, (zf_cell)((zf_ucell)d2 - (zf_ucell)d1));
 			break;
 
 		case PRIM_MUL:
 			/* Multiply top two elements on stack */
-			zf_push(ctx, zf_pop(ctx) * zf_pop(ctx));
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, (zf_cell)((zf_ucell)d1 * (zf_ucell)d2));
 			break;
 
 		case PRIM_DIV:
@@ -1083,16 +1288,17 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
 			}
 			d1 = zf_pop(ctx);
-			zf_push(ctx, d1 / d2);
+			/* MIN / -1 overflows; wrap like the other operators */
+			zf_push(ctx, d2 == -1 ? (zf_cell)(0 - (zf_ucell)d1) : d1 / d2);
 			break;
 
 		case PRIM_MOD:
 			/* Modulo next element on stack by top element */
-			if((int)(d2 = zf_pop(ctx)) == 0) {
+			if((d2 = zf_pop(ctx)) == 0) {
 				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
 			}
 			d1 = zf_pop(ctx);
-			zf_push(ctx, (int)d1 % (int)d2);
+			zf_push(ctx, d2 == -1 ? 0 : d1 % d2);
 			break;
 
 		case PRIM_IMMEDIATE:
@@ -1196,15 +1402,274 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_SHL:
 			/* Shift left of next element by top element */
-			d1 = zf_pop(ctx);
-			zf_push(ctx, (zf_int)zf_pop(ctx) << (zf_int)d1);
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d1 >= 0 && d1 < ZF_CELL_BITS ? (zf_cell)((zf_ucell)d2 << d1) : 0);
 			break;
 
 		case PRIM_SHR:
-			/* Shift right of next element by top element */
-			d1 = zf_pop(ctx);
-			zf_push(ctx, (zf_int)zf_pop(ctx) >> (zf_int)d1);
+			/* Arithmetic shift right of next element by top element */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			if(d1 >= 0 && d1 < ZF_CELL_BITS) {
+				zf_push(ctx, d2 >> d1);
+			} else {
+				zf_push(ctx, d2 < 0 ? -1 : 0);
+			}
 			break;
+
+		case PRIM_RSHIFT:
+			/* Logical shift right of next element by top element */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d1 >= 0 && d1 < ZF_CELL_BITS ? (zf_cell)((zf_ucell)d2 >> d1) : 0);
+			break;
+
+		case PRIM_ULT:
+			/* Unsigned less-than of next element and top element */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, (zf_ucell)d2 < (zf_ucell)d1 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_UDIV:
+			/* Unsigned divide next element by top element */
+			if((d2 = zf_pop(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			d1 = zf_pop(ctx);
+			zf_push(ctx, (zf_cell)((zf_ucell)d1 / (zf_ucell)d2));
+			break;
+
+		case PRIM_UMOD:
+			/* Unsigned modulo next element by top element */
+			if((d2 = zf_pop(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			d1 = zf_pop(ctx);
+			zf_push(ctx, (zf_cell)((zf_ucell)d1 % (zf_ucell)d2));
+			break;
+
+#if ZF_ENABLE_DOUBLE_CELL
+		/* 64-bit double cells, ( lo hi ). d+ d- and ud* give the same bits
+		 * for signed and unsigned doubles. */
+
+		case PRIM_DADD:
+			u2 = zf_popud(ctx); u1 = zf_popud(ctx);
+			zf_pushud(ctx, u1 + u2);
+			break;
+
+		case PRIM_DSUB:
+			u2 = zf_popud(ctx); u1 = zf_popud(ctx);
+			zf_pushud(ctx, u1 - u2);
+			break;
+
+		case PRIM_DULT:
+			u2 = zf_popud(ctx); u1 = zf_popud(ctx);
+			zf_push(ctx, u1 < u2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_UMSTAR:
+			/* Multiply two unsigned cells into a double */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_pushud(ctx, (uint64_t)(zf_ucell)d1 * (zf_ucell)d2);
+			break;
+
+		case PRIM_UDSTAR:
+			u2 = zf_popud(ctx); u1 = zf_popud(ctx);
+			zf_pushud(ctx, u1 * u2);
+			break;
+
+		case PRIM_UDDIV:
+			if((u2 = zf_popud(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			u1 = zf_popud(ctx);
+			zf_pushud(ctx, u1 / u2);
+			break;
+
+		case PRIM_UDMOD:
+			if((u2 = zf_popud(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			u1 = zf_popud(ctx);
+			zf_pushud(ctx, u1 % u2);
+			break;
+
+		case PRIM_DLT:
+			/* Signed double less-than */
+			n2 = (int64_t)zf_popud(ctx); n1 = (int64_t)zf_popud(ctx);
+			zf_push(ctx, n1 < n2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_MSTAR:
+			/* Multiply two signed cells into a double */
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_pushud(ctx, (uint64_t)((int64_t)d1 * (int64_t)d2));
+			break;
+
+		case PRIM_DDIV:
+			/* Signed double divide, truncating toward zero */
+			if((n2 = (int64_t)zf_popud(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			n1 = (int64_t)zf_popud(ctx);
+			/* MIN / -1 overflows; wrap like the other operators */
+			zf_pushud(ctx, n2 == -1 ? 0 - (uint64_t)n1 : (uint64_t)(n1 / n2));
+			break;
+
+		case PRIM_DMOD:
+			if((n2 = (int64_t)zf_popud(ctx)) == 0) {
+				zf_abort(ctx, ZF_ABORT_DIVISION_BY_ZERO);
+			}
+			n1 = (int64_t)zf_popud(ctx);
+			zf_pushud(ctx, n2 == -1 ? 0 : (uint64_t)(n1 % n2));
+			break;
+
+#endif
+
+#if ZF_ENABLE_FLOAT
+		/* Floats are IEEE single-precision bit patterns in cells. f/ follows
+		 * IEEE rules: dividing by zero gives an infinity, not an abort. */
+
+		case PRIM_FADD:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_pushf(ctx, f1 + f2);
+			break;
+
+		case PRIM_FSUB:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_pushf(ctx, f1 - f2);
+			break;
+
+		case PRIM_FMUL:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_pushf(ctx, f1 * f2);
+			break;
+
+		case PRIM_FDIV:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_pushf(ctx, f1 / f2);
+			break;
+
+		case PRIM_FLT:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_push(ctx, f1 < f2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_FEQ:
+			f2 = zf_popf(ctx); f1 = zf_popf(ctx);
+			zf_push(ctx, f1 == f2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_STOF:
+			zf_pushf(ctx, (float)zf_pop(ctx));
+			break;
+
+		case PRIM_UTOF:
+			zf_pushf(ctx, (float)(zf_ucell)zf_pop(ctx));
+			break;
+
+		case PRIM_FTOS:
+			zf_push(ctx, float_to_cell_int(zf_popf(ctx)));
+			break;
+
+		case PRIM_FSQRT:
+			zf_pushf(ctx, sqrtf(zf_popf(ctx)));
+			break;
+
+		case PRIM_FFLOOR:
+			zf_pushf(ctx, floorf(zf_popf(ctx)));
+			break;
+
+		case PRIM_FCEIL:
+			zf_pushf(ctx, ceilf(zf_popf(ctx)));
+			break;
+
+		case PRIM_FROUND:
+			zf_pushf(ctx, roundf(zf_popf(ctx)));
+			break;
+
+		case PRIM_FTRUNC:
+			zf_pushf(ctx, truncf(zf_popf(ctx)));
+			break;
+#endif
+
+#if ZF_ENABLE_DFLOAT
+		/* Double-precision floats: IEEE bit patterns in two cells, ( lo hi ) */
+
+		case PRIM_DFADD:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_pushdf(ctx, g1 + g2);
+			break;
+
+		case PRIM_DFSUB:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_pushdf(ctx, g1 - g2);
+			break;
+
+		case PRIM_DFMUL:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_pushdf(ctx, g1 * g2);
+			break;
+
+		case PRIM_DFDIV:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_pushdf(ctx, g1 / g2);
+			break;
+
+		case PRIM_DFLT:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_push(ctx, g1 < g2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_DFEQ:
+			g2 = zf_popdf(ctx); g1 = zf_popdf(ctx);
+			zf_push(ctx, g1 == g2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_STODF:
+			zf_pushdf(ctx, (double)zf_pop(ctx));
+			break;
+
+		case PRIM_DFTOS:
+			zf_push(ctx, dfloat_to_cell_int(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DTODF:
+			zf_pushdf(ctx, (double)(int64_t)zf_popud(ctx));
+			break;
+
+		case PRIM_DFTOD:
+			zf_pushud(ctx, (uint64_t)dfloat_to_int64(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DFSQRT:
+			zf_pushdf(ctx, sqrt(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DFFLOOR:
+			zf_pushdf(ctx, floor(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DFCEIL:
+			zf_pushdf(ctx, ceil(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DFROUND:
+			zf_pushdf(ctx, round(zf_popdf(ctx)));
+			break;
+
+		case PRIM_DFTRUNC:
+			zf_pushdf(ctx, trunc(zf_popdf(ctx)));
+			break;
+
+#if ZF_ENABLE_FLOAT
+		case PRIM_FTODF:
+			zf_pushdf(ctx, (double)zf_popf(ctx));
+			break;
+
+		case PRIM_DFTOF:
+			zf_pushf(ctx, (float)zf_popdf(ctx));
+			break;
+#endif
+#endif
 
 		default:
 			zf_abort(ctx, ZF_ABORT_INTERNAL_ERROR);
@@ -1261,7 +1726,24 @@ static void handle_word(zf_ctx *ctx, const char *buf)
 		/* Word not found: try to convert to a number and compile or push, depending
 		 * on state */
 
-		zf_cell v = zf_host_parse_num(ctx, buf);
+		zf_cell v;
+#if ZF_ENABLE_DOUBLE_CELL
+		uint64_t ud;
+		if(parse_double_literal(buf, &ud)) {
+			push_or_compile_ud(ctx, ud);
+			return;
+		}
+#endif
+#if ZF_ENABLE_DFLOAT
+		double df;
+		if(parse_dfloat_literal(buf, &df)) {
+			uint64_t bits;
+			memcpy(&bits, &df, sizeof(bits));
+			push_or_compile_ud(ctx, bits);
+			return;
+		}
+#endif
+		v = zf_host_parse_num(ctx, buf);
 
 		if(COMPILING(ctx)) {
 			dict_add_lit(ctx, v);
@@ -1445,6 +1927,7 @@ void zf_bootstrap(zf_ctx *ctx)
 
 	add_const(ctx, "var-max-size", 1 + sizeof(zf_cell));
 	add_const(ctx, "chkpt-size", sizeof(zf_checkpoint));
+	add_const(ctx, "cell", sizeof(zf_cell));
 }
 
 #else 
@@ -1696,6 +2179,69 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 #else
 	return zf_dict_import_with_data(ctx, buf, len, data_len);
 #endif
+}
+
+#if ZF_ENABLE_FLOAT
+zf_cell zf_float_to_cell(float f)
+{
+	zf_cell v;
+	memcpy(&v, &f, sizeof(v));
+	return v;
+}
+
+float zf_cell_to_float(zf_cell v)
+{
+	float f;
+	memcpy(&f, &v, sizeof(f));
+	return f;
+}
+#endif
+
+#if ZF_ENABLE_DFLOAT
+double zf_cells_to_dfloat(zf_cell lo, zf_cell hi)
+{
+	uint64_t u = ((uint64_t)(zf_ucell)hi << 32) | (zf_ucell)lo;
+	double v;
+	memcpy(&v, &u, sizeof(v));
+	return v;
+}
+
+void zf_dfloat_to_cells(double v, zf_cell *lo, zf_cell *hi)
+{
+	uint64_t u;
+	memcpy(&u, &v, sizeof(u));
+	*lo = (zf_cell)(zf_ucell)u;
+	*hi = (zf_cell)(zf_ucell)(u >> 32);
+}
+#endif
+
+int zf_parse_num(const char *buf, zf_cell *v)
+{
+	const char *p = buf;
+	char *end;
+	long long n;
+	int hex;
+
+	if(*p == '-' || *p == '+') p++;
+	if(*p == '\0') return 0;
+	hex = p[0] == '0' && (p[1] == 'x' || p[1] == 'X');
+
+#if ZF_ENABLE_FLOAT
+	if(!hex && strpbrk(p, ".eE") != NULL) {
+		float f;
+		if(buf[strlen(buf) - 1] == '.') return 0;
+		f = strtof(buf, &end);
+		if(end == buf || *end != '\0') return 0;
+		*v = zf_float_to_cell(f);
+		return 1;
+	}
+#endif
+
+	n = strtoll(buf, &end, hex ? 16 : 10);
+	if(end == buf || *end != '\0') return 0;
+	if(n < -2147483647LL - 1 || n > 4294967295LL) return 0;
+	*v = (zf_cell)(zf_ucell)n;
+	return 1;
 }
 
 zf_result zf_uservar_set(zf_ctx *ctx, zf_uservar_id uv, zf_cell v)

@@ -5,7 +5,7 @@ all:
 
 linux-rom: src/linux/zforth-rom
 
-zforth_dict.h: src/linux/zforth forth/bs.zf forth/core.zf forth/memaccess.zf
+zforth_dict.h: src/linux/zforth forth/bs.zf forth/core.zf forth/memaccess.zf forth/float.zf forth/double.zf forth/dfloat.zf
 	./src/linux/zforth -H zforth_dict forth/bs.zf > $@
 
 src/linux/zforth: FORCE

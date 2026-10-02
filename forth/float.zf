@@ -1,0 +1,31 @@
+( Single-precision floating point. A float is stored in one cell as its
+  IEEE-754 bit pattern, on the same stack as integers, so dup, swap, drop,
+  @, ! and the other cell words work on floats too. A literal containing a
+  dot or an exponent is a float: 1.5 -2.0 1e3 .5 - but 0x1E is hex. Use the
+  f words for float math and f. to print; . on a float prints its bits.
+  Primitives: f+ f- f* f/ f< f= s>f u>f f>s fsqrt ffloor fceil fround
+  ftrunc. f>s truncates toward zero and saturates; NaN converts to 0. )
+
+: f.  s" %f " fmt ;
+: f>  swap f< ;
+: f<= over over f< >r f= r> | ;
+: f>= swap f<= ;
+: f0< 0 f< ;
+: f0= 0 f= ;
+: fnegate 0x80000000 ^ ;
+: fabs 0x7fffffff & ;
+: fmin over over f> if swap fi drop ;
+: fmax over over f< if swap fi drop ;
+
+( Forth-2012 names. Floats share the data stack and are one cell wide, so
+  most of these are the ordinary cell words. fvariable is zero-initialized,
+  like var. )
+: floor ffloor ;
+: fdup dup ;
+: fdrop drop ;
+: fswap swap ;
+: fover over ;
+: f@ @ ;
+: f! ! ;
+: fconstant constant ;
+: fvariable var ;

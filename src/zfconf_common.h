@@ -1,6 +1,8 @@
 #ifndef ZFCONF_COMMON_H
 #define ZFCONF_COMMON_H
 
+#include <inttypes.h>
+
 /* Set to 1 to add tracing support for debugging and inspection. Requires the
  * zf_host_trace() function to be implemented. Adds about one kB to .text and
  * .rodata, dramatically reduces speed, but is very useful. Make sure to enable
@@ -89,20 +91,44 @@
 #endif
 
 
-/* Type to use for the basic cell, data stack and return stack. Choose a signed
- * integer type that suits your needs, or 'float' or 'double' if you need
- * floating point numbers */
+/* Type to use for the basic cell, data stack and return stack. Must be a
+ * signed integer type, with zf_ucell the unsigned type of the same width.
+ * Arithmetic wraps around on overflow. */
 #ifndef ZF_CELL_TYPE
-#define ZF_CELL_TYPE double
+#define ZF_CELL_TYPE int32_t
 #endif
 typedef ZF_CELL_TYPE zf_cell;
 
+#ifndef ZF_UCELL_TYPE
+#define ZF_UCELL_TYPE uint32_t
+#endif
+typedef ZF_UCELL_TYPE zf_ucell;
+
 #ifndef ZF_CELL_FMT
-#define ZF_CELL_FMT "%.17g"
+#define ZF_CELL_FMT "%" PRId32
 #endif
 
-#ifndef ZF_SCAN_FMT
-#define ZF_SCAN_FMT "%lf"
+/* Set to 1 to add 64-bit double-cell numbers, signed and unsigned: two stack
+ * entries, the low cell below the high cell (d+ d- d< du< m* um* ud* d/ dmod
+ * ud/ udmod). A number with a final '.', e.g. 123. -5. or 0xFF., is a
+ * double-cell literal. Requires 32-bit cells. */
+#ifndef ZF_ENABLE_DOUBLE_CELL
+#define ZF_ENABLE_DOUBLE_CELL 1
+#endif
+
+/* Set to 1 to add single-precision floating point. A float is stored in one
+ * cell as its IEEE-754 bit pattern, on the same stack as integers, and the
+ * f+ f- f* f/ ... primitives interpret those bits. Requires 32-bit cells. */
+#ifndef ZF_ENABLE_FLOAT
+#define ZF_ENABLE_FLOAT 1
+#endif
+
+/* Set to 1 to add double-precision floating point: an IEEE-754 double in two
+ * cells, ( lo hi ), with df+ df- df* df/ ... and literals written with a d
+ * exponent (1.5d0). Done in software on chips without a double FPU. Requires
+ * 32-bit cells. */
+#ifndef ZF_ENABLE_DFLOAT
+#define ZF_ENABLE_DFLOAT 1
 #endif
 
 /* zf_int use for bitops, some arch int type width is less than register width,
