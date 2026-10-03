@@ -67,6 +67,10 @@ if $CC $CFLAGS_COMMON $SAN_ASAN -DZF_ENABLE_NAMED_LOCALS=0 -o "$TMP/zforth-nol" 
 else
 	fail=$((fail + 1)); echo "FAIL: building with ZF_ENABLE_NAMED_LOCALS=0"
 fi
+# a line longer than any buffer is read whole: a number across the old
+# 4 KB boundary stays one token
+awk 'BEGIN { printf "var lsum 0 lsum !"; for (i = 0; i < 2000; i++) printf " 1 lsum +!"; printf " 20008 lsum +! lsum @ .\n" }' > "$TMP/long.zf"
+c '22008' "$ZF" -q -x forth/ext.zf "$TMP/long.zf"
 # the IDs from 134 up are the host application's
 c 'unhandled syscall 134' "$ZF" -q -x forth/ext.zf -e '134 sys'
 # a host program built from the reusable pieces with its own syscalls

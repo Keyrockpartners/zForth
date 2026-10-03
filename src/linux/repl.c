@@ -174,16 +174,42 @@ static void repl_poll(zf_ctx *ctx, const zfl_config *cfg)
  * Load given forth file
  */
 
+/* Reads a whole line of any length into *buf (grown as needed); returns 0
+ * at the end of the file. A line is never split, so a token can't be cut
+ * in two. */
+static int read_line(FILE *f, char **buf, size_t *cap)
+{
+	size_t len = 0;
+	if(*buf == NULL) {
+		*cap = 4096;
+		*buf = malloc(*cap);
+		if(*buf == NULL) return 0;
+	}
+	for(;;) {
+		if(fgets(*buf + len, (int)(*cap - len), f) == NULL) return len > 0;
+		len += strlen(*buf + len);
+		if(len > 0 && (*buf)[len - 1] == '\n') return 1;
+		if(len + 1 >= *cap) {
+			char *p = realloc(*buf, *cap * 2);
+			if(p == NULL) return 1;
+			*buf = p;
+			*cap *= 2;
+		}
+	}
+}
+
 void zfl_include(zf_ctx *ctx, const char *fname)
 {
-	char buf[4096];
+	char *buf = NULL;
+	size_t cap = 0;
 
 	FILE *f = fopen(fname, "rb");
 	int line = 1;
 	if(f) {
-		while(fgets(buf, sizeof(buf), f)) {
+		while(read_line(f, &buf, &cap)) {
 			if(do_eval(ctx, fname, line++, buf) != ZF_OK) had_error = 1;
 		}
+		free(buf);
 		fclose(f);
 	} else {
 		fprintf(stderr, "error opening file '%s': %s\n", fname, strerror(errno));
