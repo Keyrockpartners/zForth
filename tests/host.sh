@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Linux host features: -e and file ordering, -x, the exit status, the
-# fmt-buf, ms and millis syscalls, and ZF_DICT_HEADER.
+# fmt-buf, ms and millis syscalls, ZF_DICT_HEADER, and a host program with
+# its own syscalls (src/linux/host.h).
 . "$(dirname "$0")/lib.sh"
 
 ZF=$BUILD/asan/zforth
@@ -47,11 +48,33 @@ c '0' "$ZF" -q -x forth/bs.zf -e 'millis nip .'
 mkdir -p "$TMP/img"
 "$ZF" -H zforth_dict forth/bs.zf "$TMP/a.zf" > "$TMP/img/custom.h"
 if $CC $CFLAGS_COMMON $SAN_ASAN -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 -DZF_DICT_HEADER="\"$TMP/img/custom.h\"" \
-	-o "$TMP/img/zforth-rom" src/linux/main.c src/zforth/zforth.c -lm; then
+	-o "$TMP/img/zforth-rom" src/linux/main.c $HOST_SRCS -lm; then
 	c 'hi' "$TMP/img/zforth-rom" -q -x -e hi
 else
 	fail=$((fail + 1)); echo "FAIL: building with ZF_DICT_HEADER"
 fi
 st 1 "$ZF" -H x forth/bs.zf "$TMP/bad.zf"
+# a host program built from the reusable pieces with its own syscalls
+cat > "$TMP/own.c" <<'EOF2'
+#include "host.h"
+static int own_sys(zf_ctx *ctx, zf_syscall_id id)
+{
+	if(id != 200) return 0;
+	zf_push(ctx, zf_pop(ctx) * 2);
+	return 1;
+}
+int main(int argc, char **argv)
+{
+	zfl_config cfg = { NULL, 0, 0, own_sys };
+	return zfl_main(argc, argv, &cfg);
+}
+EOF2
+if $CC $CFLAGS_COMMON $SAN_ASAN -o "$TMP/own" "$TMP/own.c" $HOST_SRCS -lm; then
+	c '42' "$TMP/own" -q -x forth/bs.zf -e '21 200 sys .'
+	c 'unhandled syscall 201' "$TMP/own" -q -x forth/bs.zf -e '201 sys'
+	c '7' "$TMP/own" -q -x forth/bs.zf -e '16 buffer: b b 16 7 s" %d" fmt-buf b swap tell'
+else
+	fail=$((fail + 1)); echo "FAIL: building a host with its own syscalls"
+fi
 
 summary host

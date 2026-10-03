@@ -24,7 +24,7 @@ Besides `zf_host_sys()`, which dispatches the syscalls in this document, the hos
 
 | Function | Required | Behavior |
 | --- | --- | --- |
-| `zf_cell zf_host_parse_num(zf_ctx *ctx, const char *buf)` | Yes | Called by `zf_eval()` for every token that is not a known word, both when interpreting (the number is pushed) and when compiling (it is compiled as a literal). Parse the whole token as a number and return it, or call `zf_abort(ctx, ZF_ABORT_NOT_A_WORD)` if it is not one. Not needed for the prebuilt ROM image, whose numbers were parsed at export time, but needed for any script source evaluated on the device. Implement it by calling `zf_parse_num()`, as `src/linux/main.c` does. |
+| `zf_cell zf_host_parse_num(zf_ctx *ctx, const char *buf)` | Yes | Called by `zf_eval()` for every token that is not a known word, both when interpreting (the number is pushed) and when compiling (it is compiled as a literal). Parse the whole token as a number and return it, or call `zf_abort(ctx, ZF_ABORT_NOT_A_WORD)` if it is not one. Not needed for the prebuilt ROM image, whose numbers were parsed at export time, but needed for any script source evaluated on the device. Implement it by calling `zf_parse_num()`, as `src/linux/repl.c` does. |
 | `void zf_host_trace(zf_ctx *ctx, const char *fmt, va_list va)` | Only with `ZF_ENABLE_TRACE` | Output trace text. Tracing is off by default on device builds. |
 
 `zf_host_parse_num()` defines what number syntax scripts can use, so devices should use the shared `zf_parse_num()` to behave the same as Linux. It accepts:
@@ -82,7 +82,7 @@ A placeholder is `%[flags][width][.precision][l]verb`, with flags from `-`, `0`,
 | `s` | string `( addr len )`; precision limits the length | not allowed |
 | `%` | literal `%`, no argument | not allowed |
 
-Anything that is not a valid placeholder is printed as is and consumes no argument. A host can implement each placeholder by popping its cells and passing a rebuilt C format (with the matching `PRId32`/`PRIu64`/... length modifier) to `printf` or `snprintf`; `src/linux/main.c` does exactly that.
+Anything that is not a valid placeholder is printed as is and consumes no argument. A host can implement each placeholder by popping its cells and passing a rebuilt C format (with the matching `PRId32`/`PRIu64`/... length modifier) to `printf` or `snprintf`; `src/linux/fmt.c` does exactly that.
 
 IDs `133`–`135` were once `floor`, `ceil` and `round`, which are now the built-in float words `ffloor`, `fceil` and `fround` (and `ftrunc`); they have been reused for `fmt-buf`, `ms` and `millis` above. ID `136` is unused.
 

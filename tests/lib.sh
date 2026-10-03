@@ -16,6 +16,9 @@ CC=${CC:-gcc}
 CFLAGS_COMMON="-I$ROOT/src/linux -I$ROOT/src/zforth -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-result"
 SAN_ASAN="-Os -fsanitize=address"
 SAN_UBSAN="-O1 -fsanitize=address,undefined -fno-sanitize-recover=all"
+# The Linux host's reusable pieces (src/linux/host.h) and the engine; the
+# reference host adds src/linux/main.c
+HOST_SRCS="src/linux/repl.c src/linux/sys.c src/linux/fmt.c src/linux/export.c src/zforth/zforth.c"
 
 # Default binaries: the RAM build loading bs.zf, and the ROM build with bs.zf
 # baked in. run.sh overrides this through ZF_TEST_BINS.
@@ -61,7 +64,7 @@ summary() {
 # build_ram <dir> <sanitizer flags>: RAM (bootstrapping) build of the Linux host
 build_ram() {
 	mkdir -p "$1" &&
-	$CC $CFLAGS_COMMON $2 -o "$1/zforth" src/linux/main.c src/zforth/zforth.c -lm
+	$CC $CFLAGS_COMMON $2 -o "$1/zforth" src/linux/main.c $HOST_SRCS -lm
 }
 
 # build_image <dir> <sanitizer flags> <extra cflags> [file.zf...]: ROM build
@@ -76,5 +79,5 @@ build_image() {
 	"$BUILD/asan/zforth" -H zforth_dict forth/bs.zf "$@" > "$dir/zforth_dict.h" &&
 	cp src/linux/main.c "$dir/main.c" &&
 	$CC $CFLAGS_COMMON -I"$dir" $san -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 $extra \
-		-o "$dir/zforth-rom" "$dir/main.c" src/zforth/zforth.c -lm
+		-o "$dir/zforth-rom" "$dir/main.c" $HOST_SRCS -lm
 }

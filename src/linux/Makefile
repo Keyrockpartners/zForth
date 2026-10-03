@@ -1,10 +1,13 @@
 
 BIN	:= zforth
 ROM_BIN	:= zforth-rom
-SRC	:= main.c zforth.c
+# The reference host is main.c; the other files are the host's reusable
+# pieces (host.h)
+HOST_SRC := repl.c sys.c fmt.c export.c
+SRC	:= main.c $(HOST_SRC) zforth.c
 
 OBJS    := $(subst .c,.o, $(SRC))
-ROM_OBJS := main_rom.o zforth_rom.o
+ROM_OBJS := $(subst .c,_rom.o, $(SRC))
 DEPS    := $(subst .c,.d, $(SRC)) $(subst .o,.d, $(ROM_OBJS))
 
 # Use $(CC) from the environment if set (e.g. from a dev shell), else gcc
@@ -35,10 +38,9 @@ $(BIN): $(OBJS)
 $(ROM_BIN): $(ROM_OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(ROM_OBJS) $(LIBS)
 
-main_rom.o: main.c zforth_dict.h
-	$(CC) $(CFLAGS) -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 -c -o $@ $<
+main_rom.o: zforth_dict.h
 
-zforth_rom.o: ../zforth/zforth.c
+%_rom.o: %.c
 	$(CC) $(CFLAGS) -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 -c -o $@ $<
 
 zforth_dict.h: $(BIN) ../../forth/bs.zf ../../forth/core.zf ../../forth/memaccess.zf ../../forth/float.zf ../../forth/double.zf ../../forth/dfloat.zf

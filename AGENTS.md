@@ -20,6 +20,7 @@ platform syscalls, protocol support) belongs in `bs-zgo-device`.
 ## Development environment
 
 - The engine builds with the system C compiler and `make` (`src/linux/Makefile` takes `$(CC)` from the environment, else `gcc`); on Linux the REPL also needs readline. There is no dev shell here: inside `bs-zgo-device`, its nix dev shell applies to this submodule too. On macOS, use Xcode's compiler (nixpkgs' clang produces AddressSanitizer binaries that hang on macOS).
+- The Linux host is the reference host: `src/linux/main.c` plus reusable pieces declared in `src/linux/host.h` (`repl.c` the command line and REPL, `export.c` the `-H` ROM exporter, `sys.c` the core and Linux-only syscalls, `fmt.c` `fmt` and `fmt-buf`). A program that needs more syscalls (such as `bs-zgo-device`'s Linux sim host) links the pieces with its own `main()` and passes its syscalls in `zfl_config`; add generic host features to the pieces, not to `main.c`.
 - `make` builds the Linux REPL (`src/linux/zforth`); `make linux-rom` builds `src/linux/zforth-rom`, with `bs.zf` baked in as a ROM image. Run `src/linux/zforth forth/bs.zf` for a REPL with the full word set (from the repo root: `bs.zf` includes its files by relative path).
 
 ## Project notes
