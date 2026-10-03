@@ -20,7 +20,7 @@
 
 int main(int argc, char **argv)
 {
-	zfl_config cfg = { NULL, 0, 0, NULL };
+	zfl_config cfg = { NULL, 0, 0, NULL, NULL, 0 };
 #if ZF_LINUX_ROM_DICT
 	cfg.rom = zforth_dict;
 	cfg.rom_len = zforth_dict_len;

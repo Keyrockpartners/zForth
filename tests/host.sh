@@ -80,7 +80,24 @@ static int own_sys(zf_ctx *ctx, zf_syscall_id id)
 }
 int main(int argc, char **argv)
 {
-	zfl_config cfg = { NULL, 0, 0, own_sys };
+	zfl_config cfg = { NULL, 0, 0, own_sys, NULL, 0 };
+	return zfl_main(argc, argv, &cfg);
+}
+EOF2
+# a host with a poll function: called while the REPL waits for input; the
+# REPL still ends with its input
+cat > "$TMP/poller.c" <<'EOF2'
+#include <stdlib.h>
+#include "host.h"
+static int calls;
+static void poller(zf_ctx *ctx)
+{
+	if(++calls == 3) zfl_eval(ctx, NULL, 0, "99 .");
+	if(calls == 30) exit(0);
+}
+int main(int argc, char **argv)
+{
+	zfl_config cfg = { NULL, 0, 0, NULL, poller, 5 };
 	return zfl_main(argc, argv, &cfg);
 }
 EOF2
@@ -90,6 +107,14 @@ if $CC $CFLAGS_COMMON $SAN_ASAN -o "$TMP/own" "$TMP/own.c" $HOST_SRCS -lm; then
 	c '7' "$TMP/own" -q -x forth/ext.zf -e '16 buffer: b b 16 7 s" %d" fmt-buf b swap tell'
 else
 	fail=$((fail + 1)); echo "FAIL: building a host with its own syscalls"
+fi
+if $CC $CFLAGS_COMMON $SAN_ASAN -o "$TMP/poller" "$TMP/poller.c" $HOST_SRCS -lm; then
+	c '99' sh -c "sleep 1 | '$TMP/poller' -q forth/ext.zf"
+	c '7  99' sh -c "(printf '7 .\n'; sleep 1) | '$TMP/poller' -q forth/ext.zf"
+	c '8  end' sh -c "printf '8 .' | '$TMP/poller' -q forth/ext.zf; echo end"
+	c '-x:' sh -c "'$TMP/poller' -q -x forth/ext.zf; echo -x:"
+else
+	fail=$((fail + 1)); echo "FAIL: building a host with a poll function"
 fi
 
 summary host

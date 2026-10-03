@@ -24,10 +24,17 @@ typedef struct {
 	size_t rom_data_len;
 	/* The host program's own syscalls, or NULL */
 	zfl_sys_fn sys;
+	/* Called about every poll_ms while the REPL waits for input, or NULL
+	 * for a plain REPL. The REPL still ends with its input. */
+	void (*poll)(zf_ctx *ctx);
+	int poll_ms;
 } zfl_config;
 
 /* repl.c: the command line, file and dictionary loading, the REPL */
 int zfl_main(int argc, char **argv, const zfl_config *cfg);
+/* Evaluates text, printing the reason if it aborts (src and line label
+ * the message, src may be NULL) */
+zf_result zfl_eval(zf_ctx *ctx, const char *src, int line, const char *text);
 void zfl_include(zf_ctx *ctx, const char *fname);
 void zfl_save(zf_ctx *ctx, const char *fname);
 

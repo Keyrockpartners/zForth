@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <poll.h>
+#include <unistd.h>
 
 #ifdef USE_READLINE
 #include <readline/readline.h>
@@ -57,6 +59,114 @@ static zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf
 	}
 
 	return rv;
+}
+
+
+zf_result zfl_eval(zf_ctx *ctx, const char *src, int line, const char *text)
+{
+	return do_eval(ctx, src, line, text);
+}
+
+
+/*
+ * The REPL with a poll function: wait for input at most poll_ms at a time
+ * and call poll in between; it ends with its input, like the plain REPL
+ */
+
+static zf_ctx *poll_ctx;
+static int poll_line;
+
+static void eval_line(char *buf)
+{
+	if(strlen(buf) > 0) {
+		do_eval(poll_ctx, "stdin", ++poll_line, buf);
+		printf("\n");
+		fflush(stdout);
+#ifdef USE_READLINE
+		add_history(buf);
+		write_history(".zforth.hist");
+#endif
+	}
+}
+
+#ifdef USE_READLINE
+static int stdin_open = 1;
+
+static void readline_line(char *buf)
+{
+	if(buf == NULL) {
+		rl_callback_handler_remove();
+		stdin_open = 0;
+		return;
+	}
+	eval_line(buf);
+	free(buf);
+}
+#endif
+
+static void repl_poll(zf_ctx *ctx, const zfl_config *cfg)
+{
+	/* returns at the end of input */
+	char buf[4096];
+	size_t len = 0;
+	int open = 1;
+#ifdef USE_READLINE
+	int tty = isatty(0);
+	if(tty) {
+		read_history(".zforth.hist");
+		rl_callback_handler_install("", readline_line);
+	}
+#endif
+	poll_ctx = ctx;
+	for(;;) {
+		struct pollfd pfd = { 0, POLLIN, 0 };
+		int n;
+#ifdef USE_READLINE
+		if(tty) open = stdin_open;
+#endif
+		if(!open) {
+#ifdef USE_READLINE
+			if(tty) printf("\n");
+#endif
+			return;
+		}
+		n = poll(&pfd, 1, cfg->poll_ms);
+		if(n > 0 && open) {
+#ifdef USE_READLINE
+			if(tty) {
+				rl_callback_read_char();
+				cfg->poll(ctx);
+				continue;
+			}
+#endif
+			ssize_t r = read(0, buf + len, sizeof(buf) - 1 - len);
+			if(r <= 0) {
+				/* end of input: evaluate a last unterminated line */
+				open = 0;
+				buf[len] = '\0';
+				if(len > 0) eval_line(buf);
+				len = 0;
+			} else {
+				char *p, *start = buf;
+				len += (size_t)r;
+				buf[len] = '\0';
+				while((p = memchr(start, '\n', len - (size_t)(start - buf))) != NULL) {
+					*p = '\0';
+					eval_line(start);
+					start = p + 1;
+				}
+				len -= (size_t)(start - buf);
+				memmove(buf, start, len);
+				if(len == sizeof(buf) - 1) {
+					/* a line too long for the buffer: evaluate what we have */
+					buf[len] = '\0';
+					eval_line(buf);
+					len = 0;
+				}
+			}
+		}
+		cfg->poll(ctx);
+	}
 }
 
 
@@ -342,6 +452,13 @@ int zfl_main(int argc, char **argv, const zfl_config *cfg)
 		zf_cell here;
 		zf_uservar_get(ctx, ZF_USERVAR_HERE, &here);
 		printf("Welcome to zForth, %d bytes used\n", (int)here);
+	}
+
+	if(cfg->poll != NULL) {
+		repl_poll(ctx, cfg);
+		zf_free(ctx);
+		free(ctx);
+		return had_error;
 	}
 
 	/* Interactive interpreter: read a line using readline library,
