@@ -43,8 +43,8 @@ main_rom.o: zforth_dict.h
 %_rom.o: %.c
 	$(CC) $(CFLAGS) -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 -c -o $@ $<
 
-zforth_dict.h: $(BIN) ../../forth/bs.zf ../../forth/core.zf ../../forth/memaccess.zf ../../forth/float.zf ../../forth/double.zf ../../forth/dfloat.zf
-	cd ../.. && ./src/linux/zforth -H zforth_dict forth/bs.zf > src/linux/zforth_dict.h
+zforth_dict.h: $(BIN) ../../forth/ext.zf ../../forth/core.zf ../../forth/memaccess.zf ../../forth/float.zf ../../forth/double.zf ../../forth/dfloat.zf
+	cd ../.. && ./src/linux/zforth -H zforth_dict forth/ext.zf > src/linux/zforth_dict.h
 
 clean:
 	rm -f $(BIN) $(ROM_BIN) zforth_dict.h $(OBJS) $(ROM_OBJS) $(DEPS)

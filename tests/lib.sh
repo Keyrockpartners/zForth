@@ -20,9 +20,9 @@ SAN_UBSAN="-O1 -fsanitize=address,undefined -fno-sanitize-recover=all"
 # reference host adds src/linux/main.c
 HOST_SRCS="src/linux/repl.c src/linux/sys.c src/linux/fmt.c src/linux/export.c src/zforth/zforth.c"
 
-# Default binaries: the RAM build loading bs.zf, and the ROM build with bs.zf
+# Default binaries: the RAM build loading ext.zf, and the ROM build with ext.zf
 # baked in. run.sh overrides this through ZF_TEST_BINS.
-BINS=${ZF_TEST_BINS:-"$BUILD/asan/zforth forth/bs.zf|$BUILD/asan/stock/zforth-rom"}
+BINS=${ZF_TEST_BINS:-"$BUILD/asan/zforth forth/ext.zf|$BUILD/asan/stock/zforth-rom"}
 T_SQUEEZE=${T_SQUEEZE:-0}
 pass=0
 fail=0
@@ -68,7 +68,7 @@ build_ram() {
 }
 
 # build_image <dir> <sanitizer flags> <extra cflags> [file.zf...]: ROM build
-# with bs.zf and the given files baked in. Needs $BUILD/asan/zforth as the
+# with ext.zf and the given files baked in. Needs $BUILD/asan/zforth as the
 # exporter. main.c is copied next to the header because it includes
 # "zforth_dict.h" with quotes, which always looks in main.c's own directory
 # first.
@@ -76,7 +76,7 @@ build_image() {
 	local dir=$1 san=$2 extra=$3
 	shift 3
 	mkdir -p "$dir" &&
-	"$BUILD/asan/zforth" -H zforth_dict forth/bs.zf "$@" > "$dir/zforth_dict.h" &&
+	"$BUILD/asan/zforth" -H zforth_dict forth/ext.zf "$@" > "$dir/zforth_dict.h" &&
 	cp src/linux/main.c "$dir/main.c" &&
 	$CC $CFLAGS_COMMON -I"$dir" $san -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 $extra \
 		-o "$dir/zforth-rom" "$dir/main.c" $HOST_SRCS -lm

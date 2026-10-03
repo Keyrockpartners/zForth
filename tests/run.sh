@@ -17,7 +17,7 @@ for s in tests/suites/*.sh; do
 done
 echo "-- again under UBSan (RAM build)"
 for s in tests/suites/*.sh; do
-	ZF_TEST_BINS="$BUILD/ubsan/zforth forth/bs.zf" bash "$s" || status=1
+	ZF_TEST_BINS="$BUILD/ubsan/zforth forth/ext.zf" bash "$s" || status=1
 done
 echo "--"
 bash tests/images.sh || status=1

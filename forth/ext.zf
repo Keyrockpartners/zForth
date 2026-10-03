@@ -1,3 +1,6 @@
+( The engine's words beyond core.zf. Load this file first: it loads core.zf
+  and the other word files, then defines the general words. )
+
 ( Load the core library. Use the syscall directly because include is defined by core.zf. )
 130 sys forth/core.zf
 include forth/memaccess.zf
@@ -136,11 +139,3 @@ include forth/dfloat.zf
   everything defined after it. The checkpoint buffer goes before the header
   and is saved with h pointing at it, so restoring frees the buffer too. )
 : marker here chkpt-size allot here >r dup h ! dup chkpt! r> h ! >r : r> postpone literal ' chkpt-restore , postpone ; ;
-
-( Keep this last. Like GILD and EMPTY in other Forths: running empty drops
-  everything defined after this point, e.g. a downloaded script, and clears
-  the stacks. Unlike a marker, empty itself survives and can be reused. )
-chkpt empty
-
-
-

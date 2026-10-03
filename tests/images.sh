@@ -7,7 +7,7 @@ T_SQUEEZE=1
 
 image() {   # image <fixture>: build its ROM image, test both modes
 	build_image "$BUILD/img/$1" "$SAN_ASAN" "" "tests/images/$1.zf" || { fail=$((fail + 1)); echo "FAIL: building image $1"; }
-	RAM="$BUILD/asan/zforth forth/bs.zf tests/images/$1.zf"
+	RAM="$BUILD/asan/zforth forth/ext.zf tests/images/$1.zf"
 	ROM="$BUILD/img/$1/zforth-rom"
 	BINS="$RAM|$ROM"
 }

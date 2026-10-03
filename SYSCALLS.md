@@ -55,7 +55,7 @@ With `ZF_ENABLE_FLOAT` (on by default), a float is an IEEE-754 single-precision 
 
 Variables defined with `var`/`variable`, buffers made with `N buffer: name`, and other storage from `data-here`/`data-allot` get their storage in the data window during export. The window is copied to RAM at mount time, so they stay writable when the image is in flash. Anything else written into the dictionary at export time — e.g. a buffer made with `here N allot` — is part of the read-only image and aborts with `outside memory` if written at runtime.
 
-A checkpoint compiled into the image can be used at runtime to drop everything defined since mount; new definitions then start right after the data window. `bs.zf` ends with `chkpt empty`, so running `empty` resets the interpreter to the baked-in words (keeping their variables' values) and clears the stacks.
+A checkpoint compiled into the image can be used at runtime to drop everything defined since mount; new definitions then start right after the data window. An image that ends with `chkpt empty` (after everything else it bakes in) gets an `empty` that resets the interpreter to the baked-in words (keeping their variables' values) and clears the stacks, like GILD and EMPTY in other Forths. `ext.zf` does not define it, since only the image build knows what comes last.
 
 ## Required user syscalls
 

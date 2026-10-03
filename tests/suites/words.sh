@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# General words added for everyday use (bs.zf), the move, fill,
+# General words added for everyday use (ext.zf), the move, fill,
 # frame and ?bounds primitives, and byte-exact strings.
 # Each t runs its input on every binary in $BINS (see lib.sh).
 . "$(dirname "$0")/../lib.sh"

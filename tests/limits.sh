@@ -12,7 +12,7 @@ lim() {   # lim <name> <cflags>: build a traced ROM image with vars.zf
 
 # grows in 2 KB steps up to the 8 KB cap, then aborts; the interpreter recovers
 lim max8k "-DZF_DICT_MAX_SIZE=8192 -DZF_DICT_GROW_SIZE=2048"
-t $': spin begin 1 , again ;\nspin\n1 2 + .\nempty\n: hi 5 . ; hi' '[realloc 4096] [realloc 6144] [realloc 8192] stdin:2: outside memory 3 5'
+t $'chkpt empty\n: spin begin 1 , again ;\nspin\n1 2 + .\nempty\n: hi 5 . ; hi' '[realloc 4096] [realloc 6144] [realloc 8192] stdin:3: outside memory 3 5'
 # the ROM image does not count toward the limit
 t '7000 allot 1 , 1 2 + .' '[realloc 4096] [realloc 8192] 3'
 
