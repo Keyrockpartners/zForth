@@ -46,6 +46,7 @@ static zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf
 		case ZF_ABORT_BAD_LOCALS: msg = "bad locals declaration"; break;
 		case ZF_ABORT_BOUNDS: msg = "index out of range"; break;
 		case ZF_ABORT_USER: msg = "aborted"; break;
+		case ZF_ABORT_IMAGE_MISMATCH: msg = "dictionary image built with a different configuration"; break;
 		default: msg = "unknown error";
 	}
 
@@ -151,7 +152,9 @@ static void load(zf_ctx *ctx, const char *fname)
 		free(buf);
 		fclose(f);
 
-		if(rv != ZF_OK) {
+		if(rv == ZF_ABORT_IMAGE_MISMATCH) {
+			fprintf(stderr, "error loading dictionary '%s': built with different feature flags\n", fname);
+		} else if(rv != ZF_OK) {
 			fprintf(stderr, "error loading dictionary '%s'\n", fname);
 		}
 	} else {
@@ -288,6 +291,12 @@ int zfl_main(int argc, char **argv, const zfl_config *cfg)
 	} else {
 		if(cfg->rom) {
 			zf_result rv = zf_dict_mount_rom(ctx, cfg->rom, cfg->rom_len, cfg->rom_data_len);
+			if(rv == ZF_ABORT_IMAGE_MISMATCH) {
+				fprintf(stderr, "error mounting built-in ROM dictionary: built with different feature flags\n");
+				zf_free(ctx);
+				free(ctx);
+				return 1;
+			}
 			if(rv != ZF_OK) {
 				fprintf(stderr, "error mounting built-in ROM dictionary\n");
 				zf_free(ctx);

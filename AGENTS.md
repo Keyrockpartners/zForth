@@ -30,7 +30,7 @@ platform syscalls, protocol support) belongs in `bs-zgo-device`.
 - The ATmega8 implementation is currently unused; it does not need to be kept up to date unless we explicitly decide to use it again.
 - New general-purpose Forth words go in `ext.zf`, or in a new `xx.zf` file when a set of words is large or separate enough to deserve one.
 - The devices are constrained (mostly ESP32-C3, which has no FPU). Prefer cheap checks, and ask before adding runtime protection that costs memory or speed.
-- Compiled code stores primitive numbers, so adding a primitive or changing a feature flag in `src/zfconf_common.h` requires regenerating ROM images; the Linux exporter and the device must use the same feature flags.
+- Compiled code stores primitive numbers, so adding a primitive or changing a feature flag in `src/zfconf_common.h` requires regenerating ROM images; the Linux exporter and the device must use the same feature flags. Images record their configuration (`ZF_IMAGE_CONFIG` in `zforth.c`) and mounting one built differently fails with `ZF_ABORT_IMAGE_MISMATCH`; bump `ZF_IMAGE_VERSION` when primitives are reordered or the image layout changes without changing the number of primitives.
 
 ## Working conventions
 

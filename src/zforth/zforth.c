@@ -110,6 +110,24 @@ typedef enum {
 	PRIM_COUNT
 } zf_prim;
 
+/* The configuration an image depends on. Images hold primitive numbers,
+ * which depend on the feature flags, and addresses in the data window, so
+ * an image only works on a build with the same value. It is stored in the
+ * image (user variable ZF_USERVAR_CONFIG) and checked when one is imported
+ * or mounted. Bump ZF_IMAGE_VERSION when the primitives or the image layout
+ * change without changing PRIM_COUNT. An image from a machine of the other
+ * byte order fails the check too. */
+#define ZF_IMAGE_VERSION 1
+#define ZF_IMAGE_CONFIG ((zf_addr)( \
+	(zf_addr)PRIM_COUNT | \
+	(zf_addr)(ZF_ENABLE_NAMED_LOCALS ? 1 : 0) << 8 | \
+	(zf_addr)(ZF_ENABLE_DOUBLE_CELL ? 1 : 0) << 9 | \
+	(zf_addr)(ZF_ENABLE_FLOAT ? 1 : 0) << 10 | \
+	(zf_addr)(ZF_ENABLE_DFLOAT ? 1 : 0) << 11 | \
+	(zf_addr)sizeof(zf_cell) << 12 | \
+	(zf_addr)ZF_IMAGE_VERSION << 16 | \
+	(zf_addr)((ZF_DATA_ADDR >> 24) & 0xff) << 24))
+
 #if ZF_ENABLE_BOOTSTRAP
 static const char prim_names[] =
 	_("exit")    _("lit")        _("<0")    _(":")     _("_;")        _("+")
@@ -388,6 +406,14 @@ static uint8_t *data_window_ptr(zf_ctx *ctx, zf_addr addr, size_t len)
 #endif
 	}
 	return ctx->dict + dict_writable_offset(ctx, ctx->data_base) + off;
+}
+
+/* True if the image at buf was built with this build's configuration */
+static int image_config_ok(const void *buf)
+{
+	zf_addr config;
+	memcpy(&config, (const uint8_t *)buf + ZF_USERVAR_CONFIG * sizeof(zf_addr), sizeof(config));
+	return config == ZF_IMAGE_CONFIG;
 }
 
 static void uservars_from_image(zf_ctx *ctx, const void *buf)
@@ -2162,6 +2188,7 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 	DSP(ctx) = 0;
 	RSP(ctx) = 0;
 	ctx->fp = 0;
+	USERVAR(ctx)[ZF_USERVAR_CONFIG] = ZF_IMAGE_CONFIG;
 	uservars_to_image(ctx);
 
 	return ZF_OK;
@@ -2322,6 +2349,7 @@ void *zf_dump(zf_ctx *ctx, size_t *len)
 		if(len) *len = 0;
 		return NULL;
 	}
+	USERVAR(ctx)[ZF_USERVAR_CONFIG] = ZF_IMAGE_CONFIG;
 	uservars_to_image(ctx);
 	if(len) *len = dict_capacity(ctx);
 	return ctx->dict;
@@ -2377,6 +2405,9 @@ static zf_result dict_import_prepare(zf_ctx *ctx, const void *buf, size_t len, z
 	#endif
 	if(buf == NULL || len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
 		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	if(!image_config_ok(buf)) {
+		return ZF_ABORT_IMAGE_MISMATCH;
 	}
 
 	#if ZF_ENABLE_DYNAMIC_DICT
@@ -2472,6 +2503,9 @@ zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t dat
 	if(buf == NULL || data_len > len || len > (size_t)((zf_addr)-1) ||
 	   len - data_len < ZF_USERVAR_COUNT * sizeof(zf_addr)) {
 		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	if(!image_config_ok(buf)) {
+		return ZF_ABORT_IMAGE_MISMATCH;
 	}
 	rom_len = len - data_len;
 

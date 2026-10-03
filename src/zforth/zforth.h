@@ -71,7 +71,8 @@ typedef enum {
 	ZF_ABORT_EXTERNAL,
 	ZF_ABORT_BAD_LOCALS,
 	ZF_ABORT_BOUNDS,
-	ZF_ABORT_USER
+	ZF_ABORT_USER,
+	ZF_ABORT_IMAGE_MISMATCH
 } zf_result;
 
 typedef enum {
@@ -95,6 +96,9 @@ typedef enum {
     ZF_USERVAR_POSTPONE,
     ZF_USERVAR_DSP,
     ZF_USERVAR_RSP,
+    /* The configuration a dictionary image was built with, checked when one
+     * is imported or mounted (ZF_ABORT_IMAGE_MISMATCH) */
+    ZF_USERVAR_CONFIG,
 
     ZF_USERVAR_COUNT
 } zf_uservar_id;

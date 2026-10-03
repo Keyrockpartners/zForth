@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Linux host features: -e and file ordering, -x, the exit status, the
-# fmt-buf syscall, ZF_DICT_HEADER, and a host program with its own syscalls
-# (src/linux/host.h).
+# fmt-buf syscall, ZF_DICT_HEADER, the image configuration check, and a host
+# program with its own syscalls (src/linux/host.h).
 . "$(dirname "$0")/lib.sh"
 
 ZF=$BUILD/asan/zforth
@@ -51,6 +51,22 @@ else
 	fail=$((fail + 1)); echo "FAIL: building with ZF_DICT_HEADER"
 fi
 st 1 "$ZF" -H x forth/ext.zf "$TMP/bad.zf"
+# an image only works on a build with the same feature flags
+if $CC $CFLAGS_COMMON $SAN_ASAN -DZF_ENABLE_ROM_DICT=1 -DZF_LINUX_ROM_DICT=1 -DZF_ENABLE_NAMED_LOCALS=0 -DZF_DICT_HEADER="\"$TMP/img/custom.h\"" \
+	-o "$TMP/img/zforth-rom-nol" src/linux/main.c $HOST_SRCS -lm; then
+	c 'error mounting built-in ROM dictionary: built with different feature flags' "$TMP/img/zforth-rom-nol" -q -x -e hi
+	st 1 "$TMP/img/zforth-rom-nol" -q -x -e hi
+else
+	fail=$((fail + 1)); echo "FAIL: building a ROM host with ZF_ENABLE_NAMED_LOCALS=0"
+fi
+rm -f zforth.save
+"$ZF" -q -x forth/ext.zf "$TMP/a.zf" -e save && mv zforth.save "$TMP/a.save"
+c 'hi' "$ZF" -q -x -l "$TMP/a.save" -e hi
+if $CC $CFLAGS_COMMON $SAN_ASAN -DZF_ENABLE_NAMED_LOCALS=0 -o "$TMP/zforth-nol" src/linux/main.c $HOST_SRCS -lm; then
+	c "error loading dictionary '$TMP/a.save': built with different feature flags" "$TMP/zforth-nol" -q -x -l "$TMP/a.save"
+else
+	fail=$((fail + 1)); echo "FAIL: building with ZF_ENABLE_NAMED_LOCALS=0"
+fi
 # the IDs from 134 up are the host application's
 c 'unhandled syscall 134' "$ZF" -q -x forth/ext.zf -e '134 sys'
 # a host program built from the reusable pieces with its own syscalls
