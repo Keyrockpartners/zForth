@@ -57,16 +57,14 @@ Variables defined with `var`/`variable`, buffers made with `N buffer: name`, and
 
 A checkpoint compiled into the image can be used at runtime to drop everything defined since mount; new definitions then start right after the data window. `bs.zf` ends with `chkpt empty`, so running `empty` resets the interpreter to the baked-in words (keeping their variables' values) and clears the stacks.
 
-## Required BlueStreak user syscalls
+## Required user syscalls
 
-Application-specific syscalls start at `ZF_SYSCALL_USER` (`128`). For IoT device implementations, only `ZF_SYSCALL_USER + 4` and greater need to be implemented. `ZF_SYSCALL_USER + 0` through `ZF_SYSCALL_USER + 3` are Linux-only development helpers.
+Application-specific syscalls start at `ZF_SYSCALL_USER` (`128`). For IoT device implementations, only `ZF_SYSCALL_USER + 4` and `+ 5` need to be implemented. `ZF_SYSCALL_USER + 0` through `ZF_SYSCALL_USER + 3` are Linux-only development helpers. IDs from `ZF_SYSCALL_USER + 6` (`134`) up are free for the host application's own syscalls; a Linux host built from `src/linux/host.h` handles them in its `zfl_config.sys` function.
 
 | ID | Name / Forth word | Stack effect | Required behavior |
 | --- | --- | --- | --- |
 | `ZF_SYSCALL_USER + 4` (`132`) | `fmt` | `( arg... fmt-addr fmt-len -- )` | Format and output a string from dictionary memory, following C `printf` conventions (see below). Format arguments are pushed before the format string, in left-to-right placeholder order. `u.`, `f.`, `d.`, `ud.` and `df.` are built on `fmt`. |
 | `ZF_SYSCALL_USER + 5` (`133`) | `fmt-buf` | `( buf-addr buf-len arg... fmt-addr fmt-len -- n )` | Like `fmt`, but write the output into the dictionary buffer at `buf-addr` instead of printing it. Write at most `buf-len` bytes (truncating; no terminating NUL) and push `n`, the number of bytes written. The buffer sits below the arguments; count the argument cells from the format string to find it. Write with `zf_dict_write_bytes()` (buffers usually live in the data window), and build the output in C memory first, since a dictionary write may move the dictionary. |
-| `ZF_SYSCALL_USER + 6` (`134`) | `ms` | `( u -- )` | Wait `u` milliseconds (unsigned). On a device, yield to other tasks while waiting (e.g. `vTaskDelay`). |
-| `ZF_SYSCALL_USER + 7` (`135`) | `millis` | `( -- ud )` | Push the milliseconds since boot as an unsigned 64-bit double cell, `( lo hi )`, e.g. from `esp_timer_get_time() / 1000`. |
 
 ### `fmt` placeholders
 
@@ -84,7 +82,7 @@ A placeholder is `%[flags][width][.precision][l]verb`, with flags from `-`, `0`,
 
 Anything that is not a valid placeholder is printed as is and consumes no argument. A host can implement each placeholder by popping its cells and passing a rebuilt C format (with the matching `PRId32`/`PRIu64`/... length modifier) to `printf` or `snprintf`; `src/linux/fmt.c` does exactly that.
 
-IDs `133`–`135` were once `floor`, `ceil` and `round`, which are now the built-in float words `ffloor`, `fceil` and `fround` (and `ftrunc`); they have been reused for `fmt-buf`, `ms` and `millis` above. ID `136` is unused.
+IDs `133`–`135` were once `floor`, `ceil` and `round`, which are now the built-in float words `ffloor`, `fceil` and `fround` (and `ftrunc`); `133` has been reused for `fmt-buf` above.
 
 ## Linux-only user syscalls
 

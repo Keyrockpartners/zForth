@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
 
 #include "host.h"
 
@@ -26,18 +25,6 @@ static zfl_sys_fn user_sys = NULL;
 void zfl_set_sys(zfl_sys_fn fn)
 {
 	user_sys = fn;
-}
-
-/* Milliseconds since an arbitrary start, like millis() on a device */
-static uint64_t millis(void)
-{
-	static uint64_t start = 0;
-	struct timespec ts;
-	uint64_t now;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	now = (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
-	if(start == 0) start = now;
-	return now - start;
 }
 
 /*
@@ -98,25 +85,6 @@ zf_input_state zf_host_sys(zf_ctx *ctx, zf_syscall_id id, const char *input)
 		case ZF_SYSCALL_USER + 5:
 			zfl_fmt_buf(ctx);
 			break;
-
-		case ZF_SYSCALL_USER + 6: {
-			/* ms ( u -- ): delay for u milliseconds */
-			zf_ucell ms = (zf_ucell)zf_pop(ctx);
-			struct timespec ts;
-			ts.tv_sec = ms / 1000u;
-			ts.tv_nsec = (long)(ms % 1000u) * 1000000L;
-			fflush(stdout);
-			nanosleep(&ts, NULL);
-			break;
-		}
-
-		case ZF_SYSCALL_USER + 7: {
-			/* millis ( -- ud ): milliseconds since start, 64-bit */
-			uint64_t v = millis();
-			zf_push(ctx, (zf_cell)(zf_ucell)(v & 0xffffffffu));
-			zf_push(ctx, (zf_cell)(zf_ucell)(v >> 32));
-			break;
-		}
 
 		default:
 			if(user_sys == NULL || !user_sys(ctx, id)) {

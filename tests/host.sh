@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Linux host features: -e and file ordering, -x, the exit status, the
-# fmt-buf, ms and millis syscalls, ZF_DICT_HEADER, and a host program with
-# its own syscalls (src/linux/host.h).
+# fmt-buf syscall, ZF_DICT_HEADER, and a host program with its own syscalls
+# (src/linux/host.h).
 . "$(dirname "$0")/lib.sh"
 
 ZF=$BUILD/asan/zforth
@@ -41,9 +41,6 @@ c '0' "$ZF" -q -x forth/bs.zf -e '16 buffer: b b 0 7 s" %d" fmt-buf .'
 c '1.50|  ab|-5|ffffffff21' "$ZF" -q -x forth/bs.zf -e '64 buffer: b b 64 1.5 s" ab" -5 -1 s" %.2f|%4s|%d|%x" fmt-buf b over tell .'
 c '1234567890111' "$ZF" -q -x forth/bs.zf -e '64 buffer: b b 64 12345678901. s" %ld" fmt-buf b over tell .'
 c '-e:1: outside memory' "$ZF" -q -x forth/bs.zf -e '0x30000000 100 s" xyz" fmt-buf'
-# ms and millis
-c '-1' "$ZF" -q -x forth/bs.zf -e 'millis 50 ms millis 2swap d- 45. d< not . '
-c '0' "$ZF" -q -x forth/bs.zf -e 'millis nip .'
 # a ROM image selected with ZF_DICT_HEADER
 mkdir -p "$TMP/img"
 "$ZF" -H zforth_dict forth/bs.zf "$TMP/a.zf" > "$TMP/img/custom.h"
@@ -54,6 +51,8 @@ else
 	fail=$((fail + 1)); echo "FAIL: building with ZF_DICT_HEADER"
 fi
 st 1 "$ZF" -H x forth/bs.zf "$TMP/bad.zf"
+# the IDs from 134 up are the host application's
+c 'unhandled syscall 134' "$ZF" -q -x forth/bs.zf -e '134 sys'
 # a host program built from the reusable pieces with its own syscalls
 cat > "$TMP/own.c" <<'EOF2'
 #include "host.h"

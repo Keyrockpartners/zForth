@@ -123,12 +123,9 @@ include forth/dfloat.zf
     9.223372036854775808d18 df- df>d 0x80000000 | fi ;
 : f>ud  f>df df>ud ;
 
-( Host services: n ms waits n milliseconds; millis gives milliseconds since
-  start as an unsigned double cell; fmt-buf formats into a buffer:
+( fmt-buf formats into a buffer:
   buf-addr buf-len args... fmt-addr fmt-len fmt-buf gives bytes written. )
 : fmt-buf 133 sys ;
-: ms      134 sys ;
-: millis  135 sys ;
 
 ( Reserve writable storage, usage: 16 buffer: name - name pushes the buffer
   address. Use this instead of here n allot so the buffer stays writable when
