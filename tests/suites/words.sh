@@ -63,6 +63,12 @@ t ': h2 1 locals 0 [ here drop ] l@ . endlocals ; 3 h2' '3'
 t ': dd 7 8 9 dsp @ . ; dd . . .' '3 9 8 7'
 t ': dz 1 2 3 dropall 5 . ; dz dsp @ .' '5 0'
 t ': rs rsp @ ; : rs2 rs rs - . ; rs2' '0'
+# index: the address of an element, checked; a size before it fuses
+t '1000 5 0 4 index . 1000 5 4 4 index . 1000 5 2 1 index .' '1000 1016 1002'
+t '1000 5 5 4 index' 'stdin:1: index out of range'
+t '1000 5 -1 4 index' 'stdin:1: index out of range'
+t ': ix 3 index ; 100 4 3 ix . 100 4 4 ix' 'stdin:1: index out of range 109'
+t ': s3 s" abcde" 3 1 index c@ emit ; s3' 'd'
 # common words as primitives
 t '1 2 over . . . 1 2 nip . 3 4 2dup . . . . 5 6 7 2drop .' '1 2 1 2 4 3 4 3 5'
 t '1 1+ . -1 1+ . 0x7FFFFFFF 1+ . 1 2 != . 2 2 != . 2 1 > . 1 2 > . -1 1 > .' '2 0 -2147483648 -1 0 -1 0 0'

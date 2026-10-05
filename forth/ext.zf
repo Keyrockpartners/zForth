@@ -75,7 +75,8 @@ include forth/dfloat.zf
   addr len lo hi size slice gives the elements lo to hi-1, aborting with
   index out of range unless 0 <= lo <= hi <= len; daddr dlen saddr slen
   size copy copies the first min dlen slen elements and gives that
-  count. )
+  count; addr len i size index gives the address of element i, aborting
+  with index out of range unless 0 <= i < len. )
 
 ( 64-bit bitwise operations and shifts on double cells. The shift count is
   a single cell; counts of 64 or more give 0, or -1 for darshift of a

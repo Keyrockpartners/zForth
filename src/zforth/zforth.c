@@ -51,7 +51,8 @@ typedef char zf_dfloat_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t) &
  * bytes, padded to an even length. A lit16 and the primitive after it are
  * compiled as one where that primitive has a form taking the number as an
  * operand: k l@ as (l@) k, k l! as (l!) k, k 2l@, k 2l!, n + as (+) n,
- * size @@ as (@@) size and size !! as (!!) size (see dict_add_op()).
+ * size @@ as (@@) size, size !! as (!!) size and size index as (index)
+ * size (see dict_add_op()).
  * Headers (length and flags, link, name)
  * keep the variable-length cells and are followed by padding to an even
  * address. */
@@ -119,7 +120,7 @@ typedef enum {
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
 	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
 	PRIM_LGET_K,  PRIM_LSET_K,    PRIM_2LGET_K, PRIM_2LSET_K, PRIM_ADD_K,  PRIM_PEEK_K,
-	PRIM_POKE_K,
+	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -183,7 +184,7 @@ static const char prim_names[] =
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
 	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
 	_("(l@)")    _("(l!)")       _("(2l@)") _("(2l!)") _("(+)")       _("(@@)")
-	_("(!!)")
+	_("(!!)")    _("index")      _("(index)")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -1185,6 +1186,7 @@ static zf_addr fused_op(zf_addr op)
 		case PRIM_ADD: return PRIM_ADD_K;
 		case PRIM_PEEK: return PRIM_PEEK_K;
 		case PRIM_POKE: return PRIM_POKE_K;
+		case PRIM_INDEX: return PRIM_INDEX_K;
 		default: return PRIM_COUNT;
 	}
 }
@@ -1845,6 +1847,25 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 			addr = zf_pop(ctx);
 			peek(ctx, addr, &d1, size);
 			zf_push(ctx, d1);
+			break;
+
+		case PRIM_INDEX:
+			/* ( addr len i size -- addr' ) the address of element i of
+			 * len elements of size bytes at addr; aborts unless 0 <= i <
+			 * len. Always checked, as ?bounds */
+			d3 = zf_pop(ctx);
+			goto index;
+
+		case PRIM_INDEX_K:
+			d3 = (zf_cell)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
+		index:
+			d2 = zf_pop(ctx); d1 = zf_pop(ctx);
+			if((zf_ucell)d2 >= (zf_ucell)d1) {
+				zf_abort(ctx, ZF_ABORT_BOUNDS);
+			}
+			addr = (zf_addr)zf_pop(ctx);
+			zf_push(ctx, (zf_cell)((zf_ucell)addr + (zf_ucell)d2 * (zf_ucell)d3));
 			break;
 
 		case PRIM_POKE_K:
