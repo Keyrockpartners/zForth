@@ -39,6 +39,18 @@ t '8 buffer: b b 8 46 fill b 8 s" xyz" 1 copy . b 8 tell' '3 xyz.....'
 t '8 buffer: b b 8 46 fill b 2 s" xyz" 1 copy . b 4 tell' '2 xy..'
 t '8 buffer: b b 8 46 fill b 2 s" abcdef" 3 copy . b 8 tell' '2 abcdef..'
 t '1 2 3 -1 1 copy' 'stdin:1: invalid size'
+# compiled code: 16-bit units, lit16 and lit at the boundaries, calls
+# beyond a unit's reach through call, compile, and jump operands
+t ': l 32767 . -32768 . 32768 . -32769 . 0 . -1 . 0x7FFFFFFF . ; l' '32767 -32768 32768 -32769 0 -1 2147483647'
+t ': near 7 . ; 140000 allot : far 8 . ; : both near far ; both' '7 8'
+t $': nn 5 . ; : mk \' nn compile, ; immediate : u mk mk ; u' '5 5'
+t ': odd s" abc" tell s" de" tell 1 . ; odd : ev s" " swap drop . 2 . ; ev' 'abcde1 0 2'
+t 'here 0 ,j here 40 + over !j @j here 40 + = .' '-1'
+t 'here 0 ,j @j .' '0'
+t 'here 0 ,j here 100000 + swap !j' 'stdin:1: outside memory'
+t 'here 0 ,j here 1+ swap !j' 'stdin:1: outside memory'
+t 'prim-count 100 > . prim-count 1024 < .' '-1 -1'
+t ': z 1 if 2 else 3 fi . ; z : zz 0 begin 1+ dup 3 = until . ; zz' '2 3'
 # common words as primitives
 t '1 2 over . . . 1 2 nip . 3 4 2dup . . . . 5 6 7 2drop .' '1 2 1 2 4 3 4 3 5'
 t '1 1+ . -1 1+ . 0x7FFFFFFF 1+ . 1 2 != . 2 2 != . 2 1 > . 1 2 > . -1 1 > .' '2 0 -2147483648 -1 0 -1 0 0'

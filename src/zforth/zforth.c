@@ -37,6 +37,23 @@ typedef char zf_dfloat_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t) &
 #define ZF_FREE(p) free(p)
 #endif
 
+/* Compiled code is a sequence of 16-bit units at even addresses, each in
+ * the host's byte order (the image check refuses the other one):
+ *
+ *   unit < PRIM_COUNT   a primitive, perhaps with operands after it
+ *   other unit u        a call to the word whose code is at address 2u
+ *
+ * A word whose code is beyond the reach of a unit (or below 2 PRIM_COUNT)
+ * is called with the call primitive and a 32-bit address. The primitives'
+ * operands: lit a 32-bit value (two units), lit16 a signed 16-bit one,
+ * jmp and jmp0 a signed 16-bit offset in units from the operand itself (0
+ * meaning address 0, as an unpatched jump), lits a 16-bit length and the
+ * bytes, padded to an even length. Headers (length and flags, link, name)
+ * keep the variable-length cells and are followed by padding to an even
+ * address. */
+#define ZF_CODE_UNIT 2
+#define ZF_CODE_ALIGN(a) (((a) + 1) & ~(zf_addr)1)
+
 /* Flags and length encoded in words */
 
 #define ZF_FLAG_IMMEDIATE (1<<6)
@@ -72,7 +89,7 @@ typedef enum {
 	ZF_MEM_SIZE_S8 = 5,
 	ZF_MEM_SIZE_S16 = 6,
 	ZF_MEM_SIZE_S32 = 7,
-	ZF_MEM_SIZE_VAR_MAX = 64, /* Variable size encoding, 1+sizeof(zf_cell) bytes */
+	ZF_MEM_SIZE_JUMP = 64,    /* A jump operand: a 16-bit offset in units, ,j !j @j */
 } zf_mem_size;
 
 /* Define all primitives, make sure the two tables below always match.  The
@@ -96,7 +113,7 @@ typedef enum {
 	PRIM_FRAME,   PRIM_BOUNDS,    PRIM_MOVE, PRIM_FILL,     PRIM_ABORT,
 	PRIM_STREQ,   PRIM_COMPARE,   PRIM_SLICE, PRIM_COPY,    PRIM_OVER,     PRIM_NIP,
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
-	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE,
+	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -130,16 +147,19 @@ typedef enum {
  * or mounted. Bump ZF_IMAGE_VERSION when the primitives or the image layout
  * change without changing PRIM_COUNT. An image from a machine of the other
  * byte order fails the check too. */
-#define ZF_IMAGE_VERSION 1
+#define ZF_IMAGE_VERSION 2
 #define ZF_IMAGE_CONFIG ((zf_addr)( \
 	(zf_addr)PRIM_COUNT | \
-	(zf_addr)(ZF_ENABLE_NAMED_LOCALS ? 1 : 0) << 8 | \
-	(zf_addr)(ZF_ENABLE_DOUBLE_CELL ? 1 : 0) << 9 | \
-	(zf_addr)(ZF_ENABLE_FLOAT ? 1 : 0) << 10 | \
-	(zf_addr)(ZF_ENABLE_DFLOAT ? 1 : 0) << 11 | \
-	(zf_addr)sizeof(zf_cell) << 12 | \
-	(zf_addr)ZF_IMAGE_VERSION << 16 | \
+	(zf_addr)(ZF_ENABLE_NAMED_LOCALS ? 1 : 0) << 10 | \
+	(zf_addr)(ZF_ENABLE_DOUBLE_CELL ? 1 : 0) << 11 | \
+	(zf_addr)(ZF_ENABLE_FLOAT ? 1 : 0) << 12 | \
+	(zf_addr)(ZF_ENABLE_DFLOAT ? 1 : 0) << 13 | \
+	(zf_addr)sizeof(zf_cell) << 14 | \
+	(zf_addr)ZF_IMAGE_VERSION << 18 | \
 	(zf_addr)((ZF_DATA_ADDR >> 24) & 0xff) << 24))
+
+/* The number of primitives fits the configuration's 10 bits */
+typedef char zf_prim_count_fits[PRIM_COUNT < 1024 ? 1 : -1];
 
 #if ZF_ENABLE_BOOTSTRAP
 static const char prim_names[] =
@@ -155,7 +175,7 @@ static const char prim_names[] =
 	_("frame")   _("?bounds")    _("move")  _("fill")  _("abort")
 	_("str=")    _("compare")    _("slice") _("copy")  _("over")      _("nip")
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
-	_("max")     _("@")          _("!")
+	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -234,6 +254,7 @@ static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
 static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len);
 static void uservars_from_image(zf_ctx *ctx, const void *buf);
 static void uservars_to_image(zf_ctx *ctx);
+ZF_HOT zf_addr code_unit(zf_ctx *ctx, zf_addr addr);
 
 
 #if ZF_ENABLE_NAMED_LOCALS
@@ -571,8 +592,8 @@ static const char *op_name(zf_ctx *ctx, zf_addr addr)
 		p += dict_get_cell(ctx, p, &d);
 		lenflags = d;
 		p += dict_get_cell(ctx, p, &link);
-		xt = p + ZF_FLAG_LEN(lenflags);
-		dict_get_cell(ctx, xt, &op2);
+		xt = ZF_CODE_ALIGN(p + ZF_FLAG_LEN(lenflags));
+		op2 = (lenflags & ZF_FLAG_PRIM) ? (zf_cell)code_unit(ctx, xt) : -1;
 
 		if(((lenflags & ZF_FLAG_PRIM) && addr == (zf_addr)op2) || addr == w || addr == xt) {
 			int l = ZF_FLAG_LEN(lenflags);
@@ -680,10 +701,51 @@ zf_cell zf_pickr(zf_ctx *ctx, zf_addr n)
  * All access to dictionary memory is done through these functions.
  */
 
+/* For reading data and the primitives on byte ranges (move, str=,
+ * compare, copy): a pointer to the len bytes at addr when they lie in one
+ * region (the ROM image, the
+ * writable dictionary or the data window), so they work on memory directly;
+ * NULL if the range spans two regions, which is then read in pieces through
+ * dict_get_bytes(). Aborts if the range is outside memory. */
+static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end;
+	if(is_data_addr(addr)) {
+		return data_window_ptr(ctx, addr, len);
+	}
+	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	if(!range_end(addr, len, &end)) {
+		return NULL;
+	}
+#if ZF_ENABLE_ROM_DICT
+	if(ctx->rom_dict != NULL && start < (size_t)ctx->rom_len) {
+		return end <= (size_t)ctx->rom_len ? ctx->rom_dict + start : NULL;
+	}
+#endif
+	if(start >= (size_t)DICT_BASE(ctx) && end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx)) {
+		return ctx->dict + (start - (size_t)DICT_BASE(ctx));
+	}
+	return NULL;
+}
+
+/* The same for writing: NULL unless the range is writable as it is, and
+ * dict_put_bytes() then decides (growing the dictionary, or aborting) */
+static uint8_t *dict_span_writable(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	if(is_data_addr(addr)) {
+		return data_window_ptr(ctx, addr, len);
+	}
+	if(!dict_has_writable_range(ctx, addr, len)) {
+		return NULL;
+	}
+	return ctx->dict + ((size_t)addr - (size_t)DICT_BASE(ctx));
+}
+
+
 static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len)
 {
 	const uint8_t *p = (const uint8_t *)buf;
-	size_t i = len;
 	size_t off;
 	if(is_data_addr(addr)) {
 		uint8_t *dst = data_window_ptr(ctx, addr, len);
@@ -699,7 +761,7 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 	#endif
 	CHECK(ctx, dict_has_writable_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	off = dict_writable_offset(ctx, addr);
-	while(i--) ctx->dict[off++] = *p++;
+	if(len) memcpy(ctx->dict + off, p, len);
 	return len;
 }
 
@@ -707,12 +769,18 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
+	const uint8_t *src;
 	if(is_data_addr(addr)) {
-		const uint8_t *src = data_window_ptr(ctx, addr, len);
+		src = data_window_ptr(ctx, addr, len);
 		if(len) memcpy(buf, src, len);
 		return;
 	}
-	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	src = dict_span(ctx, addr, len);
+	if(src != NULL) {
+		if(len) memcpy(buf, src, len);
+		return;
+	}
+	/* across the end of the ROM image */
 	while(len--) {
 #if ZF_ENABLE_ROM_DICT
 		if(ctx->rom_dict != NULL && addr < ctx->rom_len) {
@@ -750,46 +818,6 @@ const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len)
 void zf_dict_write_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len)
 {
 	dict_put_bytes(ctx, addr, buf, len);
-}
-
-/* For the primitives on byte ranges (move, str=, compare, copy): a pointer
- * to the len bytes at addr when they lie in one region (the ROM image, the
- * writable dictionary or the data window), so they work on memory directly;
- * NULL if the range spans two regions, which is then read in pieces through
- * dict_get_bytes(). Aborts if the range is outside memory. */
-static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
-{
-	size_t start = (size_t)addr;
-	size_t end;
-	if(is_data_addr(addr)) {
-		return data_window_ptr(ctx, addr, len);
-	}
-	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
-	if(!range_end(addr, len, &end)) {
-		return NULL;
-	}
-#if ZF_ENABLE_ROM_DICT
-	if(ctx->rom_dict != NULL && start < (size_t)ctx->rom_len) {
-		return end <= (size_t)ctx->rom_len ? ctx->rom_dict + start : NULL;
-	}
-#endif
-	if(start >= (size_t)DICT_BASE(ctx) && end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx)) {
-		return ctx->dict + (start - (size_t)DICT_BASE(ctx));
-	}
-	return NULL;
-}
-
-/* The same for writing: NULL unless the range is writable as it is, and
- * dict_put_bytes() then decides (growing the dictionary, or aborting) */
-static uint8_t *dict_span_writable(zf_ctx *ctx, zf_addr addr, size_t len)
-{
-	if(is_data_addr(addr)) {
-		return data_window_ptr(ctx, addr, len);
-	}
-	if(!dict_has_writable_range(ctx, addr, len)) {
-		return NULL;
-	}
-	return ctx->dict + ((size_t)addr - (size_t)DICT_BASE(ctx));
 }
 
 /* Copy n bytes from src to dst; overlapping ranges are fine. Ranges that
@@ -892,7 +920,20 @@ static zf_addr dict_put_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell v, zf_mem_
 		}
 	}
 
-	if(size == ZF_MEM_SIZE_VAR || size == ZF_MEM_SIZE_VAR_MAX) {
+	if(size == ZF_MEM_SIZE_JUMP) {
+		/* Relative to the operand, in units; 0 is address 0 */
+		int16_t off = 0;
+		if(v != 0) {
+			zf_cell diff = (zf_cell)((zf_ucell)v - (zf_ucell)addr);
+			if(diff == 0 || (diff & 1) || diff < -65536 || diff > 65534) {
+				zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+			}
+			off = (int16_t)(diff / 2);
+		}
+		return dict_put_bytes(ctx, addr, &off, sizeof(off));
+	}
+
+	if(size == ZF_MEM_SIZE_VAR) {
 		/* One write, so a cell that straddles the end of the allocated
 		 * dictionary grows it: a second write starting past HERE would be
 		 * rejected */
@@ -943,6 +984,13 @@ static zf_addr dict_get_cell_typed(zf_ctx *ctx, zf_addr addr, zf_cell *v, zf_mem
 		}
 	} 
 	
+	if(size == ZF_MEM_SIZE_JUMP) {
+		int16_t off;
+		dict_get_bytes(ctx, addr, &off, sizeof(off));
+		*v = off == 0 ? 0 : (zf_cell)((zf_ucell)addr + (zf_ucell)((zf_cell)off * 2));
+		return sizeof(off);
+	}
+
 	GET(ZF_MEM_SIZE_CELL, zf_cell);
 	GET(ZF_MEM_SIZE_U8, uint8_t);
 	GET(ZF_MEM_SIZE_U16, uint16_t);
@@ -990,17 +1038,111 @@ static void dict_add_cell(zf_ctx *ctx, zf_cell v)
 }
 
 
+/*
+ * Code (see ZF_CODE_UNIT): reading it straight from the ROM image or the
+ * writable dictionary, which is the interpreter's hot path, and writing it
+ */
+
+/* The len bytes of code at addr, aborting unless addr is even and they lie
+ * in the ROM image or the writable dictionary */
+ZF_HOT const uint8_t *code_ptr(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t off;
+	if(addr & 1) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+#if ZF_ENABLE_ROM_DICT
+	if((size_t)addr < (size_t)ctx->rom_len) {
+		if(len > (size_t)ctx->rom_len - (size_t)addr) {
+			zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+		}
+		return ctx->rom_dict + addr;
+	}
+#endif
+	off = (size_t)addr - (size_t)DICT_BASE(ctx);
+	if((size_t)addr < (size_t)DICT_BASE(ctx) || off > dict_writable_capacity(ctx) ||
+	   len > dict_writable_capacity(ctx) - off) {
+		zf_abort(ctx, ZF_ABORT_OUTSIDE_MEM);
+	}
+	return ctx->dict + off;
+}
+
+ZF_HOT zf_addr code_unit(zf_ctx *ctx, zf_addr addr)
+{
+	uint16_t u;
+	memcpy(&u, code_ptr(ctx, addr, sizeof(u)), sizeof(u));
+	return u;
+}
+
+ZF_HOT zf_cell code_cell(zf_ctx *ctx, zf_addr addr)
+{
+	zf_cell v;
+	memcpy(&v, code_ptr(ctx, addr, sizeof(v)), sizeof(v));
+	return v;
+}
+
+/* The target of the jump operand at addr */
+ZF_HOT zf_addr code_jump(zf_ctx *ctx, zf_addr addr)
+{
+	int16_t off;
+	memcpy(&off, code_ptr(ctx, addr, sizeof(off)), sizeof(off));
+	return off == 0 ? 0 : (zf_addr)((zf_ucell)addr + (zf_ucell)((zf_cell)off * 2));
+}
+
+/* The execution token compiled at addr (a unit, or call and an address);
+ * returns the bytes it takes */
+static zf_addr code_xt(zf_ctx *ctx, zf_addr addr, zf_addr *xt)
+{
+	zf_addr u = code_unit(ctx, addr);
+	if(u == PRIM_CALL) {
+		*xt = (zf_addr)code_cell(ctx, addr + ZF_CODE_UNIT);
+		return ZF_CODE_UNIT + sizeof(zf_cell);
+	}
+	*xt = u < PRIM_COUNT ? u : u * ZF_CODE_UNIT;
+	return ZF_CODE_UNIT;
+}
+
+/* Pad HERE to an even address, where code starts */
+static void code_align(zf_ctx *ctx)
+{
+	if(HERE(ctx) & 1) {
+		uint8_t pad = 0;
+		HERE(ctx) += dict_put_bytes(ctx, HERE(ctx), &pad, 1);
+	}
+}
+
+static void dict_add_unit(zf_ctx *ctx, zf_addr u)
+{
+	uint16_t v = (uint16_t)u;
+	HERE(ctx) += dict_put_bytes(ctx, HERE(ctx), &v, sizeof(v));
+}
+
+/* Compile a primitive, or a call to the word whose code is at op */
 static void dict_add_op(zf_ctx *ctx, zf_addr op)
 {
-	dict_add_cell(ctx, op);
+	code_align(ctx);
+	if(op < PRIM_COUNT) {
+		dict_add_unit(ctx, op);
+	} else if(!(op & 1) && op / ZF_CODE_UNIT >= PRIM_COUNT && op / ZF_CODE_UNIT <= 0xffff) {
+		dict_add_unit(ctx, op / ZF_CODE_UNIT);
+	} else {
+		zf_cell v = (zf_cell)op;
+		dict_add_unit(ctx, PRIM_CALL);
+		HERE(ctx) += dict_put_bytes(ctx, HERE(ctx), &v, sizeof(v));
+	}
 	trace(ctx, "+%s ", op_name(ctx, op));
 }
 
 
 static void dict_add_lit(zf_ctx *ctx, zf_cell v)
 {
-	dict_add_op(ctx, PRIM_LIT);
-	dict_add_cell(ctx, v);
+	if(v >= -32768 && v <= 32767) {
+		dict_add_op(ctx, PRIM_LIT16);
+		dict_add_unit(ctx, (zf_addr)(uint16_t)(int16_t)v);
+	} else {
+		dict_add_op(ctx, PRIM_LIT);
+		HERE(ctx) += dict_put_bytes(ctx, HERE(ctx), &v, sizeof(v));
+	}
 }
 
 
@@ -1025,6 +1167,7 @@ static void create(zf_ctx *ctx, const char *name, int flags)
 	dict_add_cell(ctx, (strlen(name)) | flags);
 	dict_add_cell(ctx, LATEST(ctx));
 	dict_add_str(ctx, name);
+	code_align(ctx);
 	LATEST(ctx) = here_prev;
 	trace(ctx, "\n===");
 }
@@ -1050,7 +1193,7 @@ static int find_word(zf_ctx *ctx, const char *name, zf_addr *word, zf_addr *code
 			dict_get_bytes(ctx, p, ctx->name_buf, len);
 			if(memcmp(name, ctx->name_buf, len) == 0) {
 				*word = w;
-				*code = p + len;
+				*code = ZF_CODE_ALIGN(p + len);
 				return 1;
 			}
 		}
@@ -1080,15 +1223,16 @@ static void make_immediate(zf_ctx *ctx)
 static void run(zf_ctx *ctx, const char *input)
 {
 	while(ctx->ip != 0) {
-		zf_cell d;
-		zf_addr i, ip_org = ctx->ip;
-		zf_addr l = dict_get_cell(ctx, ctx->ip, &d);
-		zf_addr code = d;
+		zf_addr ip_org = ctx->ip;
+		zf_addr code = code_unit(ctx, ip_org);
 
+#if ZF_ENABLE_TRACE
+		zf_addr i;
 		trace(ctx, "\n "ZF_ADDR_FMT " " ZF_ADDR_FMT " ", ctx->ip, code);
 		for(i=0; i<RSP(ctx); i++) trace(ctx, "┊  ");
-		
-		ctx->ip += l;
+#endif
+
+		ctx->ip = ip_org + ZF_CODE_UNIT;
 
 		if(code < PRIM_COUNT) {
 			do_prim(ctx, (zf_prim)code, input);
@@ -1102,6 +1246,7 @@ static void run(zf_ctx *ctx, const char *input)
 			}
 
 		} else {
+			code *= ZF_CODE_UNIT;
 			trace(ctx, "%s/" ZF_ADDR_FMT " ", op_name(ctx, code), code);
 			zf_pushr(ctx, ctx->ip);
 			ctx->ip = code;
@@ -1406,9 +1551,30 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_LIT:
-			/* At run time, push next value from dictionary on stack */
-			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
+			/* At run time, push the 32-bit value that follows */
+			d1 = code_cell(ctx, ctx->ip);
+			ctx->ip += sizeof(zf_cell);
 			zf_push(ctx, d1);
+			break;
+
+		case PRIM_LIT16:
+			/* Push the signed 16-bit value that follows */
+			d1 = (int16_t)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			zf_push(ctx, d1);
+			break;
+
+		case PRIM_CALL:
+			/* Call the word at the 32-bit address that follows */
+			addr = (zf_addr)code_cell(ctx, ctx->ip);
+			ctx->ip += sizeof(zf_cell);
+			zf_pushr(ctx, ctx->ip);
+			ctx->ip = addr;
+			break;
+
+		case PRIM_COMPILE:
+			/* ( xt -- ) compile a call to xt, or the primitive */
+			dict_add_op(ctx, (zf_addr)zf_pop(ctx));
 			break;
 
 		case PRIM_EXIT:
@@ -1527,26 +1693,27 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_JMP:
 			/* Jump to address */
-			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
-			trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, (zf_addr)d1);
-			ctx->ip = d1;
+			addr = code_jump(ctx, ctx->ip);
+			trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, addr);
+			ctx->ip = addr;
 			break;
 
 		case PRIM_JMP0:
 			/* Jump to address if top of stack is zero */
-			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
+			addr = code_jump(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
 			if(zf_pop(ctx) == 0) {
-				trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, (zf_addr)d1);
-				ctx->ip = d1;
+				trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, addr);
+				ctx->ip = addr;
 			}
 			break;
 
 		case PRIM_TICK:
 			/* Compile next word */
 			if (COMPILING(ctx)) {
-				ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
-				trace(ctx, "%s/", op_name(ctx, d1));
-				zf_push(ctx, d1);
+				ctx->ip += code_xt(ctx, ctx->ip, &addr);
+				trace(ctx, "%s/", op_name(ctx, addr));
+				zf_push(ctx, (zf_cell)addr);
 			}
 			else {
 				if (input) {
@@ -1598,11 +1765,12 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_LITS:
-			/* Literal string */
-			ctx->ip += dict_get_cell(ctx, ctx->ip, &d1);
+			/* Literal string: a 16-bit length, the bytes, padding */
+			d1 = (zf_cell)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
 			zf_push(ctx, ctx->ip);
 			zf_push(ctx, d1);
-			ctx->ip += d1;
+			ctx->ip = ZF_CODE_ALIGN(ctx->ip + (zf_addr)d1);
 			break;
 		
 		case PRIM_AND:
@@ -2286,7 +2454,7 @@ static void handle_word(zf_ctx *ctx, const char *buf)
 
 		if(COMPILING(ctx) && (POSTPONE(ctx) || !(flags & ZF_FLAG_IMMEDIATE))) {
 			if(flags & ZF_FLAG_PRIM) {
-				dict_get_cell(ctx, c, &d);
+				d = (zf_cell)code_unit(ctx, c);
 #if ZF_ENABLE_NAMED_LOCALS
 				/* exit leaves the definition, so close its named frame */
 				if(d == PRIM_EXIT && ctx->lframe) dict_add_op(ctx, PRIM_ENDLOCALS);
@@ -2509,6 +2677,7 @@ void zf_bootstrap(zf_ctx *ctx)
 	add_const(ctx, "var-max-size", 1 + sizeof(zf_cell));
 	add_const(ctx, "chkpt-size", sizeof(zf_checkpoint));
 	add_const(ctx, "cell", sizeof(zf_cell));
+	add_const(ctx, "prim-count", PRIM_COUNT);
 }
 
 #else 

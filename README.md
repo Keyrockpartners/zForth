@@ -39,9 +39,10 @@ compiler to a platform with restricted resources.
 
 Some of zForth's highlights:
 
-- **Small dictionary**: instead of relying on a fixed cell size, the dictionary is
-  written in variable length cells: small and common numbers take less space
-  then larger, resulting in 30% to 50% space saving
+- **Small dictionary**: compiled code is 16-bit units (a primitive, or a call
+  to a word, with operands where needed), read straight from memory, and data
+  and headers use variable length cells: small and common numbers take less
+  space then larger (see the format at `ZF_CODE_UNIT` in `zforth.c`)
 
 - **Portable**: zForth is written in 100% ANSI C, and runs on virtually all
   operating systems and all architectures. Tested on x86 Linux/Win32/MS-DOS

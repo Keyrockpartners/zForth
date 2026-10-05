@@ -12,16 +12,33 @@
 : name dup @ 31 & swap next dup next rot tell @ ;
 : words latest @ begin name br dup 0 = until cr drop ;
 : prim? ( w -- bool ) @ 32 & ;
-: a->xt ( w -- xt ) dup dup @ 31 & swap next next + swap prim? if @ fi ;
+: a->code ( w -- a ) dup @ 31 & swap next next + 1+ -2 & ;
+: a->xt ( w -- xt ) dup a->code swap prim? if 3 @@ fi ;
 : xt->a ( xt -- w ) latest @ begin dup a->xt 2 pick = if swap drop exit fi next @ dup 0 = until swap drop ;
-: lit?jmp? ( a -- a boolean ) dup @ dup 1 = swap dup 18 = swap 19 = + + ;
-: disas ( a -- a ) dup dup . br br @ xt->a name drop lit?jmp? if br next dup @ . fi cr ;
+
+( Code is 16-bit units: a primitive, or a call to the word at twice the
+  unit; the primitives with operands are told apart by their numbers )
+' lit 3 @@ constant op-lit
+' lit16 3 @@ constant op-lit16
+' call 3 @@ constant op-call
+' jmp 3 @@ constant op-jmp
+' jmp0 3 @@ constant op-jmp0
+' lits 3 @@ constant op-lits
+: .op ( xt -- ) xt->a dup if name drop else drop ." ?" fi ;
+: disas ( a -- a ) dup . br br dup 3 @@ >r 2 +
+  r@ op-call = if dup 1 @@ .op 4 + r> drop cr exit fi
+  r@ dup prim-count < not if 2 * fi .op
+  r@ op-lit = if br dup 1 @@ . 4 + fi
+  r@ op-lit16 = if br dup 6 @@ . 2 + fi
+  r@ op-jmp = r@ op-jmp0 = | if br dup @j . 2 + fi
+  r@ op-lits = if br dup 3 @@ over 2 + over tell 2 + + 1+ -2 & fi
+  r> drop cr ;
 
 ( 'see' needs starting address on stack: e.g. ' words see )
-: see ( xt -- ) dup xt->a name cr drop begin disas next dup @ =0 until drop ;
+: see ( xt -- ) dup xt->a name cr drop begin disas dup 3 @@ =0 until drop ;
 
 ( 'dump' memory make hex dump len bytes from addr )
-: hex_t ' lit ,  here dup , s" 0123456789abcdef" allot swap ! ; immediate
+: hex_t s" 0123456789abcdef" drop postpone literal ; immediate
 : *hex_t hex_t ;
 : .hex *hex_t + @ emit ;
 : >nib ( n -- low high ) dup 15 & swap -16 & 16 / ;
