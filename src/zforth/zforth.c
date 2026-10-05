@@ -47,6 +47,16 @@ typedef char zf_dfloat_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t) &
 /* This macro is used to perform boundary checks. If ZF_ENABLE_BOUNDARY_CHECKS
  * is set to 0, the boundary check code will not be compiled in to reduce size */
 
+/* do_prim() is inlined into run(), its only caller, whatever the
+ * compiler's size heuristics make of a function this large. Out of line,
+ * each primitive costs another call, and do_prim()'s prologue saves many
+ * registers: on an ESP32-C3 at -O2 that made ZGo code 15 % slower. */
+#if defined(__GNUC__)
+#define ZF_HOT static inline __attribute__((always_inline))
+#else
+#define ZF_HOT static inline
+#endif
+
 #if ZF_ENABLE_BOUNDARY_CHECKS
 #define CHECK(ctx, exp, abort) if(!(exp)) zf_abort(ctx, abort);
 #else
@@ -84,12 +94,15 @@ typedef enum {
 	PRIM_ULT,     PRIM_RSHIFT,    PRIM_UDIV, PRIM_UMOD,    PRIM_LT,
 	PRIM_LOCALS,  PRIM_LGET,      PRIM_LSET, PRIM_ENDLOCALS, PRIM_2LGET,  PRIM_2LSET,
 	PRIM_FRAME,   PRIM_BOUNDS,    PRIM_MOVE, PRIM_FILL,     PRIM_ABORT,
+	PRIM_STREQ,   PRIM_COMPARE,   PRIM_SLICE, PRIM_COPY,    PRIM_OVER,     PRIM_NIP,
+	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
+	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
 #if ZF_ENABLE_DOUBLE_CELL
 	PRIM_DADD,    PRIM_DSUB,      PRIM_DULT, PRIM_UMSTAR,  PRIM_UDSTAR,   PRIM_UDDIV,
-	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,
+	PRIM_UDMOD,   PRIM_DLT,       PRIM_MSTAR, PRIM_DDIV,   PRIM_DMOD,     PRIM_DEQ,
 #endif
 #if ZF_ENABLE_FLOAT
 	PRIM_FADD,    PRIM_FSUB,      PRIM_FMUL, PRIM_FDIV,    PRIM_FLT,      PRIM_FEQ,
@@ -99,7 +112,7 @@ typedef enum {
 #if ZF_ENABLE_DFLOAT
 	PRIM_DFADD,   PRIM_DFSUB,     PRIM_DFMUL, PRIM_DFDIV,  PRIM_DFLT,     PRIM_DFEQ,
 	PRIM_STODF,   PRIM_DFTOS,     PRIM_DTODF, PRIM_DFTOD,  PRIM_DFSQRT,   PRIM_DFFLOOR,
-	PRIM_DFCEIL,  PRIM_DFROUND,   PRIM_DFTRUNC,
+	PRIM_DFCEIL,  PRIM_DFROUND,   PRIM_DFTRUNC, PRIM_DFFETCH, PRIM_DFSTORE,
 #if ZF_ENABLE_FLOAT
 	PRIM_FTODF,   PRIM_DFTOF,
 #endif
@@ -140,12 +153,15 @@ static const char prim_names[] =
 	_("u<")      _("rshift")     _("u/")    _("umod")  _("<")
 	_("locals")  _("l@")         _("l!")    _("endlocals") _("2l@")    _("2l!")
 	_("frame")   _("?bounds")    _("move")  _("fill")  _("abort")
+	_("str=")    _("compare")    _("slice") _("copy")  _("over")      _("nip")
+	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
+	_("max")     _("@")          _("!")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
 #if ZF_ENABLE_DOUBLE_CELL
 	_("d+")      _("d-")         _("du<")   _("um*")   _("ud*")       _("ud/")
-	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")
+	_("udmod")   _("d<")         _("m*")    _("d/")    _("dmod")      _("d=")
 #endif
 #if ZF_ENABLE_FLOAT
 	_("f+")      _("f-")         _("f*")    _("f/")    _("f<")        _("f=")
@@ -155,7 +171,7 @@ static const char prim_names[] =
 #if ZF_ENABLE_DFLOAT
 	_("df+")     _("df-")        _("df*")   _("df/")   _("df<")       _("df=")
 	_("s>df")    _("df>s")       _("d>df")  _("df>d")  _("dfsqrt")    _("dffloor")
-	_("dfceil")  _("dfround")    _("dftrunc")
+	_("dfceil")  _("dfround")    _("dftrunc") _("df@")  _("df!")
 #if ZF_ENABLE_FLOAT
 	_("f>df")    _("df>f")
 #endif
@@ -211,7 +227,7 @@ static const char uservar_names[] =
 
 /* Prototypes */
 
-static void do_prim(zf_ctx *ctx, zf_prim prim, const char *input);
+ZF_HOT void do_prim(zf_ctx *ctx, zf_prim prim, const char *input);
 static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len);
 static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
@@ -736,6 +752,102 @@ void zf_dict_write_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len)
 	dict_put_bytes(ctx, addr, buf, len);
 }
 
+/* For the primitives on byte ranges (move, str=, compare, copy): a pointer
+ * to the len bytes at addr when they lie in one region (the ROM image, the
+ * writable dictionary or the data window), so they work on memory directly;
+ * NULL if the range spans two regions, which is then read in pieces through
+ * dict_get_bytes(). Aborts if the range is outside memory. */
+static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end;
+	if(is_data_addr(addr)) {
+		return data_window_ptr(ctx, addr, len);
+	}
+	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	if(!range_end(addr, len, &end)) {
+		return NULL;
+	}
+#if ZF_ENABLE_ROM_DICT
+	if(ctx->rom_dict != NULL && start < (size_t)ctx->rom_len) {
+		return end <= (size_t)ctx->rom_len ? ctx->rom_dict + start : NULL;
+	}
+#endif
+	if(start >= (size_t)DICT_BASE(ctx) && end <= (size_t)DICT_BASE(ctx) + dict_writable_capacity(ctx)) {
+		return ctx->dict + (start - (size_t)DICT_BASE(ctx));
+	}
+	return NULL;
+}
+
+/* The same for writing: NULL unless the range is writable as it is, and
+ * dict_put_bytes() then decides (growing the dictionary, or aborting) */
+static uint8_t *dict_span_writable(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	if(is_data_addr(addr)) {
+		return data_window_ptr(ctx, addr, len);
+	}
+	if(!dict_has_writable_range(ctx, addr, len)) {
+		return NULL;
+	}
+	return ctx->dict + ((size_t)addr - (size_t)DICT_BASE(ctx));
+}
+
+/* Copy n bytes from src to dst; overlapping ranges are fine. Ranges that
+ * span regions go through a small buffer */
+static void dict_move(zf_ctx *ctx, zf_addr src, zf_addr dst, zf_addr n)
+{
+	uint8_t tmp[32];
+	const uint8_t *s;
+	uint8_t *d;
+	zf_addr chunk;
+	if(n == 0 || src == dst) return;
+	s = dict_span(ctx, src, n);
+	d = dict_span_writable(ctx, dst, n);
+	if(s != NULL && d != NULL) {
+		memmove(d, s, n);
+		return;
+	}
+	if(dst < src || dst >= src + n) {
+		while(n > 0) {
+			chunk = n < sizeof(tmp) ? n : (zf_addr)sizeof(tmp);
+			dict_get_bytes(ctx, src, tmp, chunk);
+			dict_put_bytes(ctx, dst, tmp, chunk);
+			src += chunk; dst += chunk; n -= chunk;
+		}
+	} else {
+		/* dst overlaps the end of src: copy from the end */
+		while(n > 0) {
+			chunk = n < sizeof(tmp) ? n : (zf_addr)sizeof(tmp);
+			n -= chunk;
+			dict_get_bytes(ctx, src + n, tmp, chunk);
+			dict_put_bytes(ctx, dst + n, tmp, chunk);
+		}
+	}
+}
+
+/* memcmp() of the n bytes at a1 and a2 */
+static int dict_compare(zf_ctx *ctx, zf_addr a1, zf_addr a2, zf_addr n)
+{
+	uint8_t t1[32], t2[32];
+	const uint8_t *p1, *p2;
+	zf_addr chunk;
+	int r;
+	if(n == 0) return 0;
+	p1 = dict_span(ctx, a1, n);
+	p2 = dict_span(ctx, a2, n);
+	if(p1 != NULL && p2 != NULL) {
+		return memcmp(p1, p2, n);
+	}
+	while(n > 0) {
+		chunk = n < sizeof(t1) ? n : (zf_addr)sizeof(t1);
+		dict_get_bytes(ctx, a1, t1, chunk);
+		dict_get_bytes(ctx, a2, t2, chunk);
+		if((r = memcmp(t1, t2, chunk)) != 0) return r;
+		a1 += chunk; a2 += chunk; n -= chunk;
+	}
+	return 0;
+}
+
 
 /*
  * zf_cells are encoded in the dictionary with a variable length:
@@ -1034,6 +1146,16 @@ static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 
 }
 
+/* Poke at memory, either user variables or dictionary memory */
+static void poke(zf_ctx *ctx, zf_addr addr, zf_cell val, zf_mem_size size)
+{
+	if(addr < ZF_USERVAR_COUNT) {
+		USERVAR(ctx)[addr] = val;
+	} else {
+		dict_put_cell_typed(ctx, addr, val, size);
+	}
+}
+
 static void allot_addr(zf_ctx *ctx, zf_addr *addr, zf_cell delta)
 {
 	if(delta < 0) {
@@ -1200,7 +1322,7 @@ static zf_addr local_slot(zf_ctx *ctx, zf_cell k)
 	return fp + (zf_addr)k;
 }
 
-static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
+ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 {
 	zf_cell d1, d2, d3;
 	zf_addr addr, code;
@@ -1314,11 +1436,7 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			size = zf_pop(ctx);
 			addr = zf_pop(ctx);
 			d1 = zf_pop(ctx);
-			if(addr < ZF_USERVAR_COUNT) {
-				USERVAR(ctx)[addr] = d1;
-			} else {
-				dict_put_cell_typed(ctx, addr, d1, size);
-			}
+			poke(ctx, addr, d1, size);
 			break;
 
 		case PRIM_SWAP:
@@ -1583,34 +1701,12 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			zf_abort(ctx, ZF_ABORT_USER);
 			break;
 
-		case PRIM_MOVE: {
-			/* ( src dst n -- ) copy n bytes; overlapping ranges are fine.
-			 * Goes through a small buffer so it works across the ROM, RAM
-			 * and data window regions */
-			uint8_t tmp[32];
-			zf_addr src, dst, n, chunk;
+		case PRIM_MOVE:
+			/* ( src dst n -- ) copy n bytes; overlapping ranges are fine */
 			d1 = zf_pop(ctx); d2 = zf_pop(ctx); d3 = zf_pop(ctx);
 			CHECK(ctx, d1 >= 0, ZF_ABORT_INVALID_SIZE);
-			n = (zf_addr)d1; dst = (zf_addr)d2; src = (zf_addr)d3;
-			if(n == 0 || src == dst) break;
-			if(dst < src || dst >= src + n) {
-				while(n > 0) {
-					chunk = n < sizeof(tmp) ? n : (zf_addr)sizeof(tmp);
-					dict_get_bytes(ctx, src, tmp, chunk);
-					dict_put_bytes(ctx, dst, tmp, chunk);
-					src += chunk; dst += chunk; n -= chunk;
-				}
-			} else {
-				/* dst overlaps the end of src: copy from the end */
-				while(n > 0) {
-					chunk = n < sizeof(tmp) ? n : (zf_addr)sizeof(tmp);
-					n -= chunk;
-					dict_get_bytes(ctx, src + n, tmp, chunk);
-					dict_put_bytes(ctx, dst + n, tmp, chunk);
-				}
-			}
+			dict_move(ctx, (zf_addr)d3, (zf_addr)d2, (zf_addr)d1);
 			break;
-		}
 
 		case PRIM_FILL: {
 			/* ( addr n byte -- ) set n bytes at addr to byte */
@@ -1627,6 +1723,112 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			}
 			break;
 		}
+
+		/* Strings and arrays as addr len (a count of elements of size
+		 * bytes for slice and copy) */
+
+		case PRIM_STREQ:
+			/* ( a1 n1 a2 n2 -- f ) the strings are equal */
+			d2 = zf_pop(ctx); addr = zf_pop(ctx);
+			d1 = zf_pop(ctx); code = zf_pop(ctx);
+			CHECK(ctx, d1 >= 0 && d2 >= 0, ZF_ABORT_INVALID_SIZE);
+			zf_push(ctx, d1 == d2 && dict_compare(ctx, code, addr, d1) == 0 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_COMPARE:
+			/* ( a1 n1 a2 n2 -- n ) -1, 0 or 1 comparing the bytes as
+			 * unsigned, a shorter prefix first */
+			d2 = zf_pop(ctx); addr = zf_pop(ctx);
+			d1 = zf_pop(ctx); code = zf_pop(ctx);
+			CHECK(ctx, d1 >= 0 && d2 >= 0, ZF_ABORT_INVALID_SIZE);
+			d3 = dict_compare(ctx, code, addr, d1 < d2 ? d1 : d2);
+			if(d3 == 0) d3 = d1 < d2 ? -1 : d1 > d2;
+			zf_push(ctx, d3 < 0 ? -1 : d3 > 0);
+			break;
+
+		case PRIM_SLICE: {
+			/* ( addr len lo hi size -- addr' len' ) elements lo to hi-1;
+			 * aborts unless 0 <= lo <= hi <= len. Always checked, as
+			 * ?bounds */
+			zf_cell lo, hi;
+			d3 = zf_pop(ctx); hi = zf_pop(ctx); lo = zf_pop(ctx);
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			if((zf_ucell)hi > (zf_ucell)d1 || (zf_ucell)lo > (zf_ucell)hi) {
+				zf_abort(ctx, ZF_ABORT_BOUNDS);
+			}
+			zf_push(ctx, (zf_cell)((zf_ucell)d2 + (zf_ucell)lo * (zf_ucell)d3));
+			zf_push(ctx, hi - lo);
+			break;
+		}
+
+		case PRIM_COPY:
+			/* ( daddr dlen saddr slen size -- n ) copy the first n =
+			 * min(dlen, slen) elements of size bytes */
+			d3 = zf_pop(ctx); d2 = zf_pop(ctx); addr = zf_pop(ctx);
+			d1 = zf_pop(ctx); code = zf_pop(ctx);
+			if(d2 < d1) d1 = d2;
+			CHECK(ctx, d1 >= 0 && d3 >= 0, ZF_ABORT_INVALID_SIZE);
+			dict_move(ctx, addr, code, (zf_addr)d1 * (zf_addr)d3);
+			zf_push(ctx, d1);
+			break;
+
+		/* Common words that are short Forth definitions elsewhere, as
+		 * primitives for speed */
+
+		case PRIM_OVER:
+			zf_push(ctx, zf_pick(ctx, 1));
+			break;
+
+		case PRIM_NIP:
+			d1 = zf_pop(ctx); zf_pop(ctx);
+			zf_push(ctx, d1);
+			break;
+
+		case PRIM_2DUP:
+			d1 = zf_pick(ctx, 1); d2 = zf_pick(ctx, 0);
+			zf_push(ctx, d1); zf_push(ctx, d2);
+			break;
+
+		case PRIM_2DROP:
+			zf_pop(ctx); zf_pop(ctx);
+			break;
+
+		case PRIM_INC:
+			zf_push(ctx, (zf_cell)((zf_ucell)zf_pop(ctx) + 1));
+			break;
+
+		case PRIM_NE:
+			zf_push(ctx, zf_pop(ctx) != zf_pop(ctx) ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_GT:
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d2 > d1 ? ZF_TRUE : ZF_FALSE);
+			break;
+
+		case PRIM_MIN:
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d1 < d2 ? d1 : d2);
+			break;
+
+		case PRIM_MAX:
+			d1 = zf_pop(ctx); d2 = zf_pop(ctx);
+			zf_push(ctx, d1 > d2 ? d1 : d2);
+			break;
+
+		case PRIM_FETCH:
+			/* ( addr -- x ) a variable-length cell, as 0 @@ */
+			addr = zf_pop(ctx);
+			peek(ctx, addr, &d1, ZF_MEM_SIZE_VAR);
+			zf_push(ctx, d1);
+			break;
+
+		case PRIM_STORE:
+			/* ( x addr -- ) as 0 !! */
+			addr = zf_pop(ctx);
+			d1 = zf_pop(ctx);
+			poke(ctx, addr, d1, ZF_MEM_SIZE_VAR);
+			break;
 
 		case PRIM_LGET:
 			/* ( k -- x ) */
@@ -1846,6 +2048,11 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			zf_pushud(ctx, n2 == -1 ? 0 : (uint64_t)(n1 % n2));
 			break;
 
+		case PRIM_DEQ:
+			u1 = zf_popud(ctx); u2 = zf_popud(ctx);
+			zf_push(ctx, u1 == u2 ? ZF_TRUE : ZF_FALSE);
+			break;
+
 #endif
 
 #if ZF_ENABLE_FLOAT
@@ -1982,6 +2189,24 @@ static void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_DFTRUNC:
 			zf_pushdf(ctx, trunc(zf_popdf(ctx)));
+			break;
+
+		/* Two cells in memory, the low one first, as 2 cells of size c:
+		 * df@ ( addr -- lo hi ) and df! ( lo hi addr -- ). For any
+		 * two-cell value, not only double floats */
+		case PRIM_DFFETCH:
+			addr = zf_pop(ctx);
+			peek(ctx, addr, &d1, ZF_MEM_SIZE_CELL);
+			peek(ctx, addr + sizeof(zf_cell), &d2, ZF_MEM_SIZE_CELL);
+			zf_push(ctx, d1);
+			zf_push(ctx, d2);
+			break;
+
+		case PRIM_DFSTORE:
+			addr = zf_pop(ctx);
+			d2 = zf_pop(ctx); d1 = zf_pop(ctx);
+			poke(ctx, addr + sizeof(zf_cell), d2, ZF_MEM_SIZE_CELL);
+			poke(ctx, addr, d1, ZF_MEM_SIZE_CELL);
 			break;
 
 #if ZF_ENABLE_FLOAT

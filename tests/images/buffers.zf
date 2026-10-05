@@ -1,4 +1,6 @@
 42 variable foo
 5 buffer: msg
 104 msg !u8 105 msg 1 + !u8 33 msg 2 + !u8
+( a string literal, in ROM in the image )
+: greeting s" hi!" ;
 chkpt base

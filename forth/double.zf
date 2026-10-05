@@ -5,12 +5,11 @@
   Signed and unsigned: d+ d- ud* d= d0= 2@ 2! 2constant 2variable d>s
   Signed: d< d> d<= d>= dmin dmax d0< m* d/ dmod dnegate dabs s>d d.
   Unsigned: du< du> du<= du>= dumin dumax um* ud/ udmod u>d ud.
-  Primitives: d+ d- d< du< m* um* ud* d/ dmod ud/ udmod. )
+  Primitives: d+ d- d< d= du< m* um* ud* d/ dmod ud/ udmod. )
 
 : s>d dup <0 ;
 : u>d 0 ;
 : d>s drop ;
-: d= rot = >r = r> & ;
 : d0= | =0 ;
 : d0< swap drop <0 ;
 : dnegate 0 0 2swap d- ;

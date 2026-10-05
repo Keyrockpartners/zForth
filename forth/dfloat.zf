@@ -4,7 +4,7 @@
   Use df. to print. On chips without a double-precision FPU these run in
   software, about 1.5 to 2 times slower than single floats on an ESP32-C3.
   Primitives: df+ df- df* df/ df< df= s>df df>s d>df df>d f>df df>f dfsqrt
-  dffloor dfceil dfround dftrunc. df>s and df>d truncate toward zero and
+  dffloor dfceil dfround dftrunc df@ df!. df>s and df>d truncate toward zero and
   saturate; NaN converts to 0. )
 
 : df. s" %.15lg " fmt ;
@@ -18,11 +18,9 @@
 : dfmin 2over 2over df> if 2swap fi 2drop ;
 : dfmax 2over 2over df< if 2swap fi 2drop ;
 
-( Forth-2012 names. df! stores the double low cell first, which is the
-  native byte order on little-endian chips such as the ESP32 family, so C
-  code can read it as a double. dfvariable is zero-initialized and stays
+( Forth-2012 names. df@ and df!, primitives for any two-cell value, keep
+  the low cell first, which is the native byte order on little-endian
+  chips such as the ESP32 family, so C code can read it as a double. dfvariable is zero-initialized and stays
   writable in a ROM image. )
-: df! dup >r cell + !c r> !c ;
-: df@ dup @c swap cell + @c ;
 : dfconstant >r >r : r> postpone literal r> postpone literal postpone ; ;
 : dfvariable data-here 2 cells data-allot 0 0 2 pick df! constant ;

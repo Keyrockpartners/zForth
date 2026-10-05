@@ -22,13 +22,9 @@ include forth/memaccess.zf
   recursion works. )
 : dropall 0 dsp ! ;
 : chkpt here chkpt-size allot >r : ' dropall , r> dup >r postpone literal ' chkpt-restore , postpone ; postpone immediate r> chkpt! ;
-: 2drop drop drop ;
-: 2dup over over ;
 : 2swap rot >r rot r> ;
 : 2over 3 pick 3 pick ;
 : cells cell * ;
-: max  over over < if swap fi drop ;
-: min  over over > if swap fi drop ;
 : log" compiling @ if postpone s" ' tell , else here postpone s" tell h ! fi ; immediate
 : fmt 132 sys ;
 : fmt" compiling @ if postpone s" ' fmt , else here >r postpone s" fmt r> h ! fi ; immediate
@@ -46,8 +42,7 @@ include forth/double.zf
 include forth/dfloat.zf
 
 ( Standard Forth names for words zForth spells differently, and other
-  common words that were missing )
-: nip    swap drop ;
+  common words that were missing; nip 2dup 2drop min max are primitives )
 : tuck   swap over ;
 : -rot   rot rot ;
 : r@     1 pickr ;
@@ -74,18 +69,13 @@ include forth/dfloat.zf
 : repeat postpone again postpone fi ; immediate
 : cmove move ;
 
-( Strings as addr len. compare gives -1, 0 or 1 comparing bytes as
-  unsigned, a shorter prefix sorting first. str= is true if equal. )
-: str= ( a1 n1 a2 n2 -- f )
-  rot over != if drop 2drop 0 exit fi
-  3 locals 0 begin dup 2 l@ < while
-    dup 0 l@ + @u8 over 1 l@ + @u8 != if drop 0 endlocals exit fi 1+
-  repeat drop -1 endlocals ;
-: compare ( a1 n1 a2 n2 -- n )
-  4 locals 0 begin dup 1 l@ < over 3 l@ < & while
-    dup 0 l@ + @u8 over 2 l@ + @u8 2dup != if u< if -1 else 1 fi nip endlocals exit fi
-    2drop 1+
-  repeat drop 1 l@ 3 l@ 2dup < if 2drop -1 else > if 1 else 0 fi fi endlocals ;
+( Strings as addr len, primitives: a1 n1 a2 n2 compare gives -1, 0 or 1
+  comparing bytes as unsigned, a shorter prefix sorting first; str= is
+  true if equal. Arrays as addr len of elements of size bytes:
+  addr len lo hi size slice gives the elements lo to hi-1, aborting with
+  index out of range unless 0 <= lo <= hi <= len; daddr dlen saddr slen
+  size copy copies the first min dlen slen elements and gives that
+  count. )
 
 ( 64-bit bitwise operations and shifts on double cells. The shift count is
   a single cell; counts of 64 or more give 0, or -1 for darshift of a

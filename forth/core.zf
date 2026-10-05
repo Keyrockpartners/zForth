@@ -11,10 +11,9 @@
 
 
 ( dictionary access for regular variable-length cells. These are shortcuts
-  through the primitive operations are !!, @@ and ,, )
+  through the primitive operations are !!, @@ and ,, ; @ and !, which are
+  0 @@ and 0 !!, are primitives )
 
-: !    0 !! ;
-: @    0 @@ ;
 : ,    0 ,, ;
 : #    0 ## ;
 
@@ -33,19 +32,15 @@
 : postpone 1 _postpone ! ; immediate
 
 
-( some operators and shortcuts )
-: 1+ 1 + ;
+( some operators and shortcuts; 1+ over > != are primitives )
 : 1- 1 - ;
-: over 1 pick ;
 : +!   dup @ rot + swap ! ;
 : inc  1 swap +! ;
 : dec  -1 swap +! ;
-: >    swap < ;
 : <=   over over >r >r < r> r> = + ;
 : >=   swap <= ;
 : =0   0 = ;
 : not  =0 ;
-: !=   = not ;
 : cr   10 emit ;
 : br 32 emit ;
 : ..   dup . ;

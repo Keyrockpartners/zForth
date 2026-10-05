@@ -47,7 +47,7 @@ With `ZF_ENABLE_FLOAT` (on by default), a float is an IEEE-754 single-precision 
 
 ## Abort reasons
 
-`zf_eval()` returns a `zf_result`. Besides the stack, memory and parsing errors, two reasons come from Forth code: `ZF_ABORT_BOUNDS` ("index out of range") from the `?bounds` primitive, used for array, slice and string index checks, and `ZF_ABORT_USER` ("aborted") from the `abort` primitive, used to stop on an error after printing a message. Like the others, they abort only the current `zf_eval()` call. Hosts that print abort reasons should add messages for them. `ZF_ABORT_IMAGE_MISMATCH` is not an abort: `zf_dict_mount_rom()`, `zf_dict_import()` and `zf_dict_import_with_data()` return it for an image built with a different configuration (see below).
+`zf_eval()` returns a `zf_result`. Besides the stack, memory and parsing errors, two reasons come from Forth code: `ZF_ABORT_BOUNDS` ("index out of range") from the `?bounds` and `slice` primitives, used for array, slice and string index checks, and `ZF_ABORT_USER` ("aborted") from the `abort` primitive, used to stop on an error after printing a message. Like the others, they abort only the current `zf_eval()` call. Hosts that print abort reasons should add messages for them. `ZF_ABORT_IMAGE_MISMATCH` is not an abort: `zf_dict_mount_rom()`, `zf_dict_import()` and `zf_dict_import_with_data()` return it for an image built with a different configuration (see below).
 
 ## Prebuilt dictionaries
 
