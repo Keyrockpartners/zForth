@@ -255,7 +255,27 @@ static const char uservar_names[] =
 
 /* Prototypes */
 
-ZF_HOT void do_prim(zf_ctx *ctx, zf_prim prim, const char *input);
+/* The interpreter's state while run() runs, kept out of the context so
+ * the compiler holds it in registers (stores to the stacks and through the
+ * dictionary's pointers would otherwise force reloading it from memory):
+ * the instruction pointer, the stack and frame pointers, and the ROM
+ * image's bounds for fetching from it without the generic range check.
+ * They are written back to the context (reg_out) before anything outside
+ * the interpreter could see them (a syscall, the dsp and rsp user
+ * variables, returning) and read again after (reg_in). */
+typedef struct {
+	zf_addr ip;
+	zf_addr dsp, rsp, fp;  /* the context's DSP, RSP and fp */
+#if ZF_ENABLE_ROM_DICT
+	const uint8_t *rom;
+	zf_addr rom_len;
+#endif
+} zf_reg;
+
+ZF_HOT void do_prim(zf_ctx *ctx, zf_prim prim, const char *input, zf_reg *r);
+ZF_HOT void reg_out(zf_ctx *ctx, const zf_reg *r);
+ZF_HOT void reg_in(zf_ctx *ctx, zf_reg *r);
+ZF_HOT void r_pushr(zf_ctx *ctx, zf_reg *r, zf_cell v);
 static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t len);
 static zf_addr dict_get_cell(zf_ctx *ctx, zf_addr addr, zf_cell *v);
 static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len);
@@ -687,15 +707,6 @@ static void zf_pushr(zf_ctx *ctx, zf_cell v)
 }
 
 
-static zf_cell zf_popr(zf_ctx *ctx)
-{
-	zf_cell v;
-	CHECK(ctx, RSP(ctx) > 0, ZF_ABORT_RSTACK_UNDERRUN);
-	CHECK(ctx, RSP(ctx) <= ZF_RSTACK_SIZE, ZF_ABORT_RSTACK_OVERRUN);
-	v = ctx->rstack[--RSP(ctx)];
-	trace(ctx, "r«" ZF_CELL_FMT " ", v);
-	return v;
-}
 
 zf_cell zf_pickr(zf_ctx *ctx, zf_addr n)
 {
@@ -1099,10 +1110,37 @@ ZF_HOT zf_cell code_cell(zf_ctx *ctx, zf_addr addr)
 	return (zf_cell)CODE_U32(p);
 }
 
-/* The target of the jump operand at addr */
-ZF_HOT zf_addr code_jump(zf_ctx *ctx, zf_addr addr)
+
+/* As code_ptr(), from run()'s registers: an even address with len bytes
+ * in the ROM image directly, anything else the generic way */
+ZF_HOT const uint8_t *reg_ptr(zf_ctx *ctx, const zf_reg *r, zf_addr addr, size_t len)
 {
-	const uint8_t *p = code_ptr(ctx, addr, 2);
+#if ZF_ENABLE_ROM_DICT
+	if(!(addr & 1) && addr < r->rom_len && len <= (size_t)(r->rom_len - addr)) {
+		return r->rom + addr;
+	}
+#else
+	(void)r;
+#endif
+	return code_ptr(ctx, addr, len);
+}
+
+ZF_HOT zf_addr reg_unit(zf_ctx *ctx, const zf_reg *r, zf_addr addr)
+{
+	const uint8_t *p = reg_ptr(ctx, r, addr, 2);
+	return CODE_U16(p);
+}
+
+ZF_HOT zf_cell reg_cell(zf_ctx *ctx, const zf_reg *r, zf_addr addr)
+{
+	const uint8_t *p = reg_ptr(ctx, r, addr, 4);
+	return (zf_cell)CODE_U32(p);
+}
+
+/* The target of the jump operand at addr */
+ZF_HOT zf_addr reg_jump(zf_ctx *ctx, const zf_reg *r, zf_addr addr)
+{
+	const uint8_t *p = reg_ptr(ctx, r, addr, 2);
 	int16_t off = (int16_t)CODE_U16(p);
 	return off == 0 ? 0 : (zf_addr)((zf_ucell)addr + (zf_ucell)((zf_cell)off * 2));
 }
@@ -1271,38 +1309,48 @@ static void make_immediate(zf_ctx *ctx)
 
 static void run(zf_ctx *ctx, const char *input)
 {
-	while(ctx->ip != 0) {
-		zf_addr ip_org = ctx->ip;
-		zf_addr code = code_unit(ctx, ip_org);
+	zf_reg r;
+	r.ip = ctx->ip;
+	reg_in(ctx, &r);
+#if ZF_ENABLE_ROM_DICT
+	r.rom = ctx->rom_dict;
+	r.rom_len = ctx->rom_dict != NULL ? ctx->rom_len : 0;
+#endif
+
+	while(r.ip != 0) {
+		zf_addr ip_org = r.ip;
+		zf_addr code = reg_unit(ctx, &r, ip_org);
 
 #if ZF_ENABLE_TRACE
 		zf_addr i;
-		trace(ctx, "\n "ZF_ADDR_FMT " " ZF_ADDR_FMT " ", ctx->ip, code);
-		for(i=0; i<RSP(ctx); i++) trace(ctx, "┊  ");
+		trace(ctx, "\n "ZF_ADDR_FMT " " ZF_ADDR_FMT " ", r.ip, code);
+		for(i=0; i<r.rsp; i++) trace(ctx, "┊  ");
 #endif
 
-		ctx->ip = ip_org + ZF_CODE_UNIT;
+		r.ip = ip_org + ZF_CODE_UNIT;
 
 		if(code < PRIM_COUNT) {
-			do_prim(ctx, (zf_prim)code, input);
+			do_prim(ctx, (zf_prim)code, input, &r);
 
 			/* If the prim requests input, restore IP so that the
 			 * next time around we call the same prim again */
 
 			if(ctx->input_state != ZF_INPUT_INTERPRET) {
-				ctx->ip = ip_org;
+				r.ip = ip_org;
 				break;
 			}
 
 		} else {
 			code *= ZF_CODE_UNIT;
 			trace(ctx, "%s/" ZF_ADDR_FMT " ", op_name(ctx, code), code);
-			zf_pushr(ctx, ctx->ip);
-			ctx->ip = code;
+			r_pushr(ctx, &r, r.ip);
+			r.ip = code;
 		}
 
 		input = NULL;
-	} 
+	}
+	ctx->ip = r.ip;
+	reg_out(ctx, &r);
 }
 
 
@@ -1373,12 +1421,6 @@ static void allot_addr(zf_ctx *ctx, zf_addr *addr, zf_cell delta)
 
 #if ZF_ENABLE_DOUBLE_CELL || ZF_ENABLE_DFLOAT
 /* Two-cell values are ( lo hi ): the high cell is on top of the stack */
-static uint64_t zf_popud(zf_ctx *ctx)
-{
-	uint64_t hi = (zf_ucell)zf_pop(ctx);
-	uint64_t lo = (zf_ucell)zf_pop(ctx);
-	return (hi << 32) | lo;
-}
 
 static void zf_pushud(zf_ctx *ctx, uint64_t v)
 {
@@ -1399,20 +1441,7 @@ static void push_or_compile_ud(zf_ctx *ctx, uint64_t v)
 #endif
 
 #if ZF_ENABLE_DFLOAT
-static double zf_popdf(zf_ctx *ctx)
-{
-	uint64_t u = zf_popud(ctx);
-	double v;
-	memcpy(&v, &u, sizeof(v));
-	return v;
-}
 
-static void zf_pushdf(zf_ctx *ctx, double v)
-{
-	uint64_t u;
-	memcpy(&u, &v, sizeof(u));
-	zf_pushud(ctx, u);
-}
 
 /* Truncate toward zero, saturating out-of-range values and mapping NaN to 0 */
 static zf_cell dfloat_to_cell_int(double v)
@@ -1487,15 +1516,7 @@ static int parse_double_literal(const char *buf, uint64_t *v)
 #endif
 
 #if ZF_ENABLE_FLOAT
-static float zf_popf(zf_ctx *ctx)
-{
-	return zf_cell_to_float(zf_pop(ctx));
-}
 
-static void zf_pushf(zf_ctx *ctx, float f)
-{
-	zf_push(ctx, zf_float_to_cell(f));
-}
 
 /* Truncate toward zero, saturating out-of-range values and mapping NaN to 0
  * (a plain C conversion is undefined for those) */
@@ -1508,18 +1529,163 @@ static zf_cell float_to_cell_int(float f)
 }
 #endif
 
+
+/* The stack operations on run()'s registers (zf_reg); the same checks as
+ * zf_push() and the others */
+
+ZF_HOT void reg_out(zf_ctx *ctx, const zf_reg *r)
+{
+	DSP(ctx) = r->dsp;
+	RSP(ctx) = r->rsp;
+	ctx->fp = r->fp;
+}
+
+ZF_HOT void reg_in(zf_ctx *ctx, zf_reg *r)
+{
+	r->dsp = DSP(ctx);
+	r->rsp = RSP(ctx);
+	r->fp = ctx->fp;
+}
+
+ZF_HOT void r_push(zf_ctx *ctx, zf_reg *r, zf_cell v)
+{
+	CHECK(ctx, r->dsp < ZF_DSTACK_SIZE, ZF_ABORT_DSTACK_OVERRUN);
+	trace(ctx, "»" ZF_CELL_FMT " ", v);
+	ctx->dstack[r->dsp++] = v;
+}
+
+ZF_HOT zf_cell r_pop(zf_ctx *ctx, zf_reg *r)
+{
+	zf_cell v;
+	CHECK(ctx, r->dsp > 0, ZF_ABORT_DSTACK_UNDERRUN);
+	CHECK(ctx, r->dsp <= ZF_DSTACK_SIZE, ZF_ABORT_DSTACK_OVERRUN);
+	v = ctx->dstack[--r->dsp];
+	trace(ctx, "«" ZF_CELL_FMT " ", v);
+	return v;
+}
+
+ZF_HOT zf_cell r_pick(zf_ctx *ctx, const zf_reg *r, zf_addr n)
+{
+	CHECK(ctx, n < r->dsp, ZF_ABORT_DSTACK_UNDERRUN);
+	CHECK(ctx, r->dsp <= ZF_DSTACK_SIZE, ZF_ABORT_DSTACK_OVERRUN);
+	return ctx->dstack[r->dsp - n - 1];
+}
+
+ZF_HOT void r_pushr(zf_ctx *ctx, zf_reg *r, zf_cell v)
+{
+	CHECK(ctx, r->rsp < ZF_RSTACK_SIZE, ZF_ABORT_RSTACK_OVERRUN);
+	trace(ctx, "r»" ZF_CELL_FMT " ", v);
+	ctx->rstack[r->rsp++] = v;
+}
+
+ZF_HOT zf_cell r_popr(zf_ctx *ctx, zf_reg *r)
+{
+	zf_cell v;
+	CHECK(ctx, r->rsp > 0, ZF_ABORT_RSTACK_UNDERRUN);
+	CHECK(ctx, r->rsp <= ZF_RSTACK_SIZE, ZF_ABORT_RSTACK_OVERRUN);
+	v = ctx->rstack[--r->rsp];
+	trace(ctx, "r«" ZF_CELL_FMT " ", v);
+	return v;
+}
+
+ZF_HOT zf_cell r_pickr(zf_ctx *ctx, const zf_reg *r, zf_addr n)
+{
+	CHECK(ctx, n < r->rsp, ZF_ABORT_RSTACK_UNDERRUN);
+	CHECK(ctx, r->rsp <= ZF_RSTACK_SIZE, ZF_ABORT_RSTACK_OVERRUN);
+	return ctx->rstack[r->rsp - n - 1];
+}
+
 /* Return-stack index of local k in the open frame, aborting if there is no
  * frame or k is out of range */
-ZF_HOT zf_addr local_slot(zf_ctx *ctx, zf_cell k)
+ZF_HOT zf_addr r_local_slot(zf_ctx *ctx, const zf_reg *r, zf_cell k)
 {
-	zf_addr fp = ctx->fp;
-	CHECK(ctx, fp >= 2 && fp <= RSP(ctx), ZF_ABORT_OUTSIDE_MEM);
+	zf_addr fp = r->fp;
+	CHECK(ctx, fp >= 2 && fp <= r->rsp, ZF_ABORT_OUTSIDE_MEM);
 	CHECK(ctx, k >= 0 && k < ctx->rstack[fp - 1], ZF_ABORT_OUTSIDE_MEM);
-	CHECK(ctx, fp + (zf_addr)k < RSP(ctx), ZF_ABORT_OUTSIDE_MEM);
+	CHECK(ctx, fp + (zf_addr)k < r->rsp, ZF_ABORT_OUTSIDE_MEM);
 	return fp + (zf_addr)k;
 }
 
-ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
+/* peek and poke reach the user variables, dsp and rsp among them */
+ZF_HOT zf_addr r_peek(zf_ctx *ctx, zf_reg *r, zf_addr addr, zf_cell *val, zf_mem_size size)
+{
+	if(addr < ZF_USERVAR_COUNT) reg_out(ctx, r);
+	return peek(ctx, addr, val, size);
+}
+
+ZF_HOT void r_poke(zf_ctx *ctx, zf_reg *r, zf_addr addr, zf_cell val, zf_mem_size size)
+{
+	if(addr < ZF_USERVAR_COUNT) {
+		reg_out(ctx, r);
+		poke(ctx, addr, val, size);
+		reg_in(ctx, r);
+	} else {
+		poke(ctx, addr, val, size);
+	}
+}
+
+#if ZF_ENABLE_DOUBLE_CELL || ZF_ENABLE_DFLOAT
+ZF_HOT uint64_t r_popud(zf_ctx *ctx, zf_reg *r)
+{
+	uint64_t hi = (zf_ucell)r_pop(ctx, r);
+	uint64_t lo = (zf_ucell)r_pop(ctx, r);
+	return (hi << 32) | lo;
+}
+
+ZF_HOT void r_pushud(zf_ctx *ctx, zf_reg *r, uint64_t v)
+{
+	r_push(ctx, r, (zf_cell)(zf_ucell)v);
+	r_push(ctx, r, (zf_cell)(zf_ucell)(v >> 32));
+}
+#endif
+
+#if ZF_ENABLE_DFLOAT
+ZF_HOT double r_popdf(zf_ctx *ctx, zf_reg *r)
+{
+	uint64_t u = r_popud(ctx, r);
+	double v;
+	memcpy(&v, &u, sizeof(v));
+	return v;
+}
+
+ZF_HOT void r_pushdf(zf_ctx *ctx, zf_reg *r, double v)
+{
+	uint64_t u;
+	memcpy(&u, &v, sizeof(u));
+	r_pushud(ctx, r, u);
+}
+#endif
+
+#if ZF_ENABLE_FLOAT
+ZF_HOT float r_popf(zf_ctx *ctx, zf_reg *r)
+{
+	return zf_cell_to_float(r_pop(ctx, r));
+}
+
+ZF_HOT void r_pushf(zf_ctx *ctx, zf_reg *r, float f)
+{
+	r_push(ctx, r, zf_float_to_cell(f));
+}
+#endif
+
+/* In do_prim(), the stack operations work on run()'s registers */
+#define zf_push(c, v) r_push(c, r, v)
+#define zf_pop(c) r_pop(c, r)
+#define zf_pick(c, n) r_pick(c, r, n)
+#define zf_pushr(c, v) r_pushr(c, r, v)
+#define zf_popr(c) r_popr(c, r)
+#define zf_pickr(c, n) r_pickr(c, r, n)
+#define local_slot(c, k) r_local_slot(c, r, k)
+#define peek(c, a, v, s) r_peek(c, r, a, v, s)
+#define poke(c, a, v, s) r_poke(c, r, a, v, s)
+#define zf_popud(c) r_popud(c, r)
+#define zf_pushud(c, v) r_pushud(c, r, v)
+#define zf_popdf(c) r_popdf(c, r)
+#define zf_pushdf(c, v) r_pushdf(c, r, v)
+#define zf_popf(c) r_popf(c, r)
+#define zf_pushf(c, v) r_pushf(c, r, v)
+
+ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 {
 	zf_cell d1, d2, d3;
 	zf_addr addr, code;
@@ -1579,7 +1745,11 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_RESTORE:
-			checkpoint_restore(ctx, zf_pop(ctx));
+			d1 = zf_pop(ctx);
+			reg_out(ctx, r);
+			checkpoint_restore(ctx, d1);
+			reg_in(ctx, r);
+			r->ip = ctx->ip;   /* 0: the code being run may be gone */
 			break;
 
 		case PRIM_DATA_HERE:
@@ -1606,24 +1776,24 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_LIT:
 			/* At run time, push the 32-bit value that follows */
-			d1 = code_cell(ctx, ctx->ip);
-			ctx->ip += sizeof(zf_cell);
+			d1 = reg_cell(ctx, r, r->ip);
+			r->ip += sizeof(zf_cell);
 			zf_push(ctx, d1);
 			break;
 
 		case PRIM_LIT16:
 			/* Push the signed 16-bit value that follows */
-			d1 = (int16_t)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			d1 = (int16_t)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			zf_push(ctx, d1);
 			break;
 
 		case PRIM_CALL:
 			/* Call the word at the 32-bit address that follows */
-			addr = (zf_addr)code_cell(ctx, ctx->ip);
-			ctx->ip += sizeof(zf_cell);
-			zf_pushr(ctx, ctx->ip);
-			ctx->ip = addr;
+			addr = (zf_addr)reg_cell(ctx, r, r->ip);
+			r->ip += sizeof(zf_cell);
+			zf_pushr(ctx, r->ip);
+			r->ip = addr;
 			break;
 
 		case PRIM_COMPILE:
@@ -1634,20 +1804,20 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		/* The fused forms: the number that came before as an operand */
 
 		case PRIM_LGET_K:
-			addr = local_slot(ctx, (zf_cell)code_unit(ctx, ctx->ip));
-			ctx->ip += ZF_CODE_UNIT;
+			addr = local_slot(ctx, (zf_cell)reg_unit(ctx, r, r->ip));
+			r->ip += ZF_CODE_UNIT;
 			zf_push(ctx, ctx->rstack[addr]);
 			break;
 
 		case PRIM_LSET_K:
-			addr = local_slot(ctx, (zf_cell)code_unit(ctx, ctx->ip));
-			ctx->ip += ZF_CODE_UNIT;
+			addr = local_slot(ctx, (zf_cell)reg_unit(ctx, r, r->ip));
+			r->ip += ZF_CODE_UNIT;
 			ctx->rstack[addr] = zf_pop(ctx);
 			break;
 
 		case PRIM_2LGET_K:
-			d1 = (zf_cell)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			d1 = (zf_cell)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			addr = local_slot(ctx, d1);
 			code = local_slot(ctx, d1 + 1);
 			zf_push(ctx, ctx->rstack[addr]);
@@ -1655,8 +1825,8 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_2LSET_K:
-			d1 = (zf_cell)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			d1 = (zf_cell)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			addr = local_slot(ctx, d1);
 			code = local_slot(ctx, d1 + 1);
 			ctx->rstack[code] = zf_pop(ctx);
@@ -1664,22 +1834,22 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			break;
 
 		case PRIM_ADD_K:
-			d1 = (int16_t)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			d1 = (int16_t)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			zf_push(ctx, (zf_cell)((zf_ucell)zf_pop(ctx) + (zf_ucell)d1));
 			break;
 
 		case PRIM_PEEK_K:
-			size = (zf_mem_size)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			size = (zf_mem_size)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			addr = zf_pop(ctx);
 			peek(ctx, addr, &d1, size);
 			zf_push(ctx, d1);
 			break;
 
 		case PRIM_POKE_K:
-			size = (zf_mem_size)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			size = (zf_mem_size)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			addr = zf_pop(ctx);
 			d1 = zf_pop(ctx);
 			poke(ctx, addr, d1, size);
@@ -1687,7 +1857,7 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_EXIT:
 			/* Return from word */
-			ctx->ip = zf_popr(ctx);
+			r->ip = zf_popr(ctx);
 			break;
 		
 		case PRIM_LEN:
@@ -1745,7 +1915,13 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		case PRIM_SYS:
 			/* Perform host system call */
 			d1 = zf_pop(ctx);
+			/* A syscall may evaluate (include): that run leaves ip 0,
+			 * which ends this one too, as its return stack is gone */
+			ctx->ip = r->ip;
+			reg_out(ctx, r);
 			ctx->input_state = zf_host_sys(ctx, (zf_syscall_id)d1, input);
+			reg_in(ctx, r);
+			r->ip = ctx->ip;
 			if(ctx->input_state != ZF_INPUT_INTERPRET) {
 				zf_push(ctx, d1); /* re-push id to resume */
 			}
@@ -1801,25 +1977,25 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_JMP:
 			/* Jump to address */
-			addr = code_jump(ctx, ctx->ip);
-			trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, addr);
-			ctx->ip = addr;
+			addr = reg_jump(ctx, r, r->ip);
+			trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, r->ip, addr);
+			r->ip = addr;
 			break;
 
 		case PRIM_JMP0:
 			/* Jump to address if top of stack is zero */
-			addr = code_jump(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
+			addr = reg_jump(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
 			if(zf_pop(ctx) == 0) {
-				trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, ctx->ip, addr);
-				ctx->ip = addr;
+				trace(ctx, "ip " ZF_ADDR_FMT "=>" ZF_ADDR_FMT, r->ip, addr);
+				r->ip = addr;
 			}
 			break;
 
 		case PRIM_TICK:
 			/* Compile next word */
 			if (COMPILING(ctx)) {
-				ctx->ip += code_xt(ctx, ctx->ip, &addr);
+				r->ip += code_xt(ctx, r->ip, &addr);
 				trace(ctx, "%s/", op_name(ctx, addr));
 				zf_push(ctx, (zf_cell)addr);
 			}
@@ -1874,11 +2050,11 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_LITS:
 			/* Literal string: a 16-bit length, the bytes, padding */
-			d1 = (zf_cell)code_unit(ctx, ctx->ip);
-			ctx->ip += ZF_CODE_UNIT;
-			zf_push(ctx, ctx->ip);
+			d1 = (zf_cell)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
+			zf_push(ctx, r->ip);
 			zf_push(ctx, d1);
-			ctx->ip = ZF_CODE_ALIGN(ctx->ip + (zf_addr)d1);
+			r->ip = ZF_CODE_ALIGN(r->ip + (zf_addr)d1);
 			break;
 		
 		case PRIM_AND:
@@ -1931,15 +2107,15 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			/* ( x0 ... xn-1 n -- ) open a frame, local k = xk */
 			d1 = zf_pop(ctx);
 			CHECK(ctx, d1 >= 0, ZF_ABORT_INVALID_SIZE);
-			CHECK(ctx, (zf_addr)d1 <= DSP(ctx), ZF_ABORT_DSTACK_UNDERRUN);
-			zf_pushr(ctx, (zf_cell)ctx->fp);
+			CHECK(ctx, (zf_addr)d1 <= r->dsp, ZF_ABORT_DSTACK_UNDERRUN);
+			zf_pushr(ctx, (zf_cell)r->fp);
 			zf_pushr(ctx, d1);
-			addr = RSP(ctx);
+			addr = r->rsp;
 			for(code = 0; code < (zf_addr)d1; code++) {
-				zf_pushr(ctx, ctx->dstack[DSP(ctx) - (zf_addr)d1 + code]);
+				zf_pushr(ctx, ctx->dstack[r->dsp - (zf_addr)d1 + code]);
 			}
-			DSP(ctx) -= (zf_addr)d1;
-			ctx->fp = addr;
+			r->dsp -= (zf_addr)d1;
+			r->fp = addr;
 			break;
 
 		case PRIM_FRAME:
@@ -1948,18 +2124,18 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			d2 = zf_pop(ctx);
 			d1 = zf_pop(ctx);
 			CHECK(ctx, d1 >= 0 && d1 <= d2, ZF_ABORT_INVALID_SIZE);
-			CHECK(ctx, (zf_addr)d1 <= DSP(ctx), ZF_ABORT_DSTACK_UNDERRUN);
-			zf_pushr(ctx, (zf_cell)ctx->fp);
+			CHECK(ctx, (zf_addr)d1 <= r->dsp, ZF_ABORT_DSTACK_UNDERRUN);
+			zf_pushr(ctx, (zf_cell)r->fp);
 			zf_pushr(ctx, d2);
-			addr = RSP(ctx);
+			addr = r->rsp;
 			for(code = 0; code < (zf_addr)d1; code++) {
-				zf_pushr(ctx, ctx->dstack[DSP(ctx) - (zf_addr)d1 + code]);
+				zf_pushr(ctx, ctx->dstack[r->dsp - (zf_addr)d1 + code]);
 			}
 			for(; code < (zf_addr)d2; code++) {
 				zf_pushr(ctx, 0);
 			}
-			DSP(ctx) -= (zf_addr)d1;
-			ctx->fp = addr;
+			r->dsp -= (zf_addr)d1;
+			r->fp = addr;
 			break;
 
 		case PRIM_BOUNDS:
@@ -2210,10 +2386,10 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 
 		case PRIM_ENDLOCALS:
 			/* Close the frame, dropping anything pushed above it */
-			CHECK(ctx, ctx->fp >= 2 && ctx->fp <= RSP(ctx), ZF_ABORT_RSTACK_UNDERRUN);
-			addr = ctx->fp;
-			ctx->fp = (zf_addr)ctx->rstack[addr - 2];
-			RSP(ctx) = addr - 2;
+			CHECK(ctx, r->fp >= 2 && r->fp <= r->rsp, ZF_ABORT_RSTACK_UNDERRUN);
+			addr = r->fp;
+			r->fp = (zf_addr)ctx->rstack[addr - 2];
+			r->rsp = addr - 2;
 			break;
 
 		case PRIM_LT:
@@ -2514,6 +2690,21 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 	}
 }
 
+#undef zf_push
+#undef zf_pop
+#undef zf_pick
+#undef zf_pushr
+#undef zf_popr
+#undef zf_pickr
+#undef local_slot
+#undef peek
+#undef poke
+#undef zf_popud
+#undef zf_pushud
+#undef zf_popdf
+#undef zf_pushdf
+#undef zf_popf
+#undef zf_pushf
 
 /*
  * Handle incoming word. Compile or interpreted the word, or pass it to a

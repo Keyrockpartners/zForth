@@ -58,6 +58,11 @@ t ': ll 2 locals 0 l@ . 1 l@ . 9 1 l! 1 l@ . endlocals ; 4 6 ll' '4 6 9'
 t ': dl 2 locals 0 2l@ d. 5. 0 2l! 0 2l@ d. endlocals ; 7. dl' '7 5'
 t ': h 1 locals 0 begin l@ dup . 9 > if endlocals exit fi 10 0 l! 0 again ; 5 h' '5 10'
 t ': h2 1 locals 0 [ here drop ] l@ . endlocals ; 3 h2' '3'
+# the stack pointers are kept in registers while words run: dsp and rsp
+# read and written from a word see them
+t ': dd 7 8 9 dsp @ . ; dd . . .' '3 9 8 7'
+t ': dz 1 2 3 dropall 5 . ; dz dsp @ .' '5 0'
+t ': rs rsp @ ; : rs2 rs rs - . ; rs2' '0'
 # common words as primitives
 t '1 2 over . . . 1 2 nip . 3 4 2dup . . . . 5 6 7 2drop .' '1 2 1 2 4 3 4 3 5'
 t '1 1+ . -1 1+ . 0x7FFFFFFF 1+ . 1 2 != . 2 2 != . 2 1 > . 1 2 > . -1 1 > .' '2 0 -2147483648 -1 0 -1 0 0'
