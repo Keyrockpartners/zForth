@@ -1076,25 +1076,34 @@ ZF_HOT const uint8_t *code_ptr(zf_ctx *ctx, zf_addr addr, size_t len)
 	return ctx->dict + off;
 }
 
+/* Units and operands in the host's byte order, read a byte at a time: the
+ * pointer may not be aligned (the ROM image is a byte array), and some
+ * compilers (Xtensa's GCC) call memcpy() for a small copy */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define CODE_U16(p) ((uint16_t)((p)[0] << 8 | (p)[1]))
+#define CODE_U32(p) ((uint32_t)(p)[0] << 24 | (uint32_t)(p)[1] << 16 | (uint32_t)(p)[2] << 8 | (p)[3])
+#else
+#define CODE_U16(p) ((uint16_t)((p)[0] | (p)[1] << 8))
+#define CODE_U32(p) ((p)[0] | (uint32_t)(p)[1] << 8 | (uint32_t)(p)[2] << 16 | (uint32_t)(p)[3] << 24)
+#endif
+
 ZF_HOT zf_addr code_unit(zf_ctx *ctx, zf_addr addr)
 {
-	uint16_t u;
-	memcpy(&u, code_ptr(ctx, addr, sizeof(u)), sizeof(u));
-	return u;
+	const uint8_t *p = code_ptr(ctx, addr, 2);
+	return CODE_U16(p);
 }
 
 ZF_HOT zf_cell code_cell(zf_ctx *ctx, zf_addr addr)
 {
-	zf_cell v;
-	memcpy(&v, code_ptr(ctx, addr, sizeof(v)), sizeof(v));
-	return v;
+	const uint8_t *p = code_ptr(ctx, addr, 4);
+	return (zf_cell)CODE_U32(p);
 }
 
 /* The target of the jump operand at addr */
 ZF_HOT zf_addr code_jump(zf_ctx *ctx, zf_addr addr)
 {
-	int16_t off;
-	memcpy(&off, code_ptr(ctx, addr, sizeof(off)), sizeof(off));
+	const uint8_t *p = code_ptr(ctx, addr, 2);
+	int16_t off = (int16_t)CODE_U16(p);
 	return off == 0 ? 0 : (zf_addr)((zf_ucell)addr + (zf_ucell)((zf_cell)off * 2));
 }
 
@@ -1501,7 +1510,7 @@ static zf_cell float_to_cell_int(float f)
 
 /* Return-stack index of local k in the open frame, aborting if there is no
  * frame or k is out of range */
-static zf_addr local_slot(zf_ctx *ctx, zf_cell k)
+ZF_HOT zf_addr local_slot(zf_ctx *ctx, zf_cell k)
 {
 	zf_addr fp = ctx->fp;
 	CHECK(ctx, fp >= 2 && fp <= RSP(ctx), ZF_ABORT_OUTSIDE_MEM);
