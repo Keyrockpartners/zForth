@@ -51,6 +51,13 @@ t 'here 0 ,j here 100000 + swap !j' 'stdin:1: outside memory'
 t 'here 0 ,j here 1+ swap !j' 'stdin:1: outside memory'
 t 'prim-count 100 > . prim-count 1024 < .' '-1 -1'
 t ': z 1 if 2 else 3 fi . ; z : zz 0 begin 1+ dup 3 = until . ; zz' '2 3'
+# a lit16 and l@ l! 2l@ 2l! + @@ !! after it compile as one primitive,
+# never across a jump target (begin, if, here)
+t ': p 3 + 70000 + -2 + ; 1 p . var v : s 1234 v 1 !! v 1 @@ . -5 v 0 !! v 0 @@ . ; s' '70002 1234 -5'
+t ': ll 2 locals 0 l@ . 1 l@ . 9 1 l! 1 l@ . endlocals ; 4 6 ll' '4 6 9'
+t ': dl 2 locals 0 2l@ d. 5. 0 2l! 0 2l@ d. endlocals ; 7. dl' '7 5'
+t ': h 1 locals 0 begin l@ dup . 9 > if endlocals exit fi 10 0 l! 0 again ; 5 h' '5 10'
+t ': h2 1 locals 0 [ here drop ] l@ . endlocals ; 3 h2' '3'
 # common words as primitives
 t '1 2 over . . . 1 2 nip . 3 4 2dup . . . . 5 6 7 2drop .' '1 2 1 2 4 3 4 3 5'
 t '1 1+ . -1 1+ . 0x7FFFFFFF 1+ . 1 2 != . 2 2 != . 2 1 > . 1 2 > . -1 1 > .' '2 0 -2147483648 -1 0 -1 0 0'

@@ -48,7 +48,11 @@ typedef char zf_dfloat_needs_32_bit_cells[(sizeof(zf_cell) == sizeof(uint32_t) &
  * operands: lit a 32-bit value (two units), lit16 a signed 16-bit one,
  * jmp and jmp0 a signed 16-bit offset in units from the operand itself (0
  * meaning address 0, as an unpatched jump), lits a 16-bit length and the
- * bytes, padded to an even length. Headers (length and flags, link, name)
+ * bytes, padded to an even length. A lit16 and the primitive after it are
+ * compiled as one where that primitive has a form taking the number as an
+ * operand: k l@ as (l@) k, k l! as (l!) k, k 2l@, k 2l!, n + as (+) n,
+ * size @@ as (@@) size and size !! as (!!) size (see dict_add_op()).
+ * Headers (length and flags, link, name)
  * keep the variable-length cells and are followed by padding to an even
  * address. */
 #define ZF_CODE_UNIT 2
@@ -114,6 +118,8 @@ typedef enum {
 	PRIM_STREQ,   PRIM_COMPARE,   PRIM_SLICE, PRIM_COPY,    PRIM_OVER,     PRIM_NIP,
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
 	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
+	PRIM_LGET_K,  PRIM_LSET_K,    PRIM_2LGET_K, PRIM_2LSET_K, PRIM_ADD_K,  PRIM_PEEK_K,
+	PRIM_POKE_K,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -176,6 +182,8 @@ static const char prim_names[] =
 	_("str=")    _("compare")    _("slice") _("copy")  _("over")      _("nip")
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
 	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
+	_("(l@)")    _("(l!)")       _("(2l@)") _("(2l!)") _("(+)")       _("(@@)")
+	_("(!!)")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -316,6 +324,7 @@ static void checkpoint_restore(zf_ctx *ctx, zf_addr addr)
 	}
 	HERE(ctx) = cp.here;
 	LATEST(ctx) = cp.latest;
+	ctx->last_lit = 0;
 	ctx->input_state = ZF_INPUT_INTERPRET;
 	ctx->ip = 0;
 	ctx->read_len = 0;
@@ -1117,9 +1126,38 @@ static void dict_add_unit(zf_ctx *ctx, zf_addr u)
 	HERE(ctx) += dict_put_bytes(ctx, HERE(ctx), &v, sizeof(v));
 }
 
-/* Compile a primitive, or a call to the word whose code is at op */
+/* The form of op taking the number of a lit16 before it as an operand, or
+ * PRIM_COUNT if none */
+static zf_addr fused_op(zf_addr op)
+{
+	switch(op) {
+		case PRIM_LGET: return PRIM_LGET_K;
+		case PRIM_LSET: return PRIM_LSET_K;
+		case PRIM_2LGET: return PRIM_2LGET_K;
+		case PRIM_2LSET: return PRIM_2LSET_K;
+		case PRIM_ADD: return PRIM_ADD_K;
+		case PRIM_PEEK: return PRIM_PEEK_K;
+		case PRIM_POKE: return PRIM_POKE_K;
+		default: return PRIM_COUNT;
+	}
+}
+
+/* Compile a primitive, or a call to the word whose code is at op. Right
+ * after a lit16 (last_lit, forgotten whenever Forth reads or moves here,
+ * so never across a jump target), a primitive with a fused form replaces
+ * the lit16's unit, which keeps the number as its operand. */
 static void dict_add_op(zf_ctx *ctx, zf_addr op)
 {
+	zf_addr f = fused_op(op);
+	if(f != PRIM_COUNT && ctx->last_lit != 0 && ctx->last_lit + 2 * ZF_CODE_UNIT == HERE(ctx) &&
+	   code_unit(ctx, ctx->last_lit) == PRIM_LIT16) {
+		uint16_t u = (uint16_t)f;
+		dict_put_bytes(ctx, ctx->last_lit, &u, sizeof(u));
+		ctx->last_lit = 0;
+		trace(ctx, "+%s ", op_name(ctx, op));
+		return;
+	}
+	ctx->last_lit = 0;
 	code_align(ctx);
 	if(op < PRIM_COUNT) {
 		dict_add_unit(ctx, op);
@@ -1138,6 +1176,7 @@ static void dict_add_lit(zf_ctx *ctx, zf_cell v)
 {
 	if(v >= -32768 && v <= 32767) {
 		dict_add_op(ctx, PRIM_LIT16);
+		ctx->last_lit = HERE(ctx) - ZF_CODE_UNIT;
 		dict_add_unit(ctx, (zf_addr)(uint16_t)(int16_t)v);
 	} else {
 		dict_add_op(ctx, PRIM_LIT);
@@ -1163,6 +1202,7 @@ static void create(zf_ctx *ctx, const char *name, int flags)
 {
 	zf_addr here_prev;
 	trace(ctx, "\n=== create '%s'", name);
+	ctx->last_lit = 0;
 	here_prev = HERE(ctx);
 	dict_add_cell(ctx, (strlen(name)) | flags);
 	dict_add_cell(ctx, LATEST(ctx));
@@ -1281,7 +1321,9 @@ static void execute(zf_ctx *ctx, zf_addr addr)
 static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 {
 	if(addr < ZF_USERVAR_COUNT) {
-		/* Special case for user variables */
+		/* Special case for user variables. Code compiled after here was
+		 * read may be a jump target: no fusing across it */
+		if(addr == ZF_USERVAR_HERE) ctx->last_lit = 0;
 		*val = USERVAR(ctx)[addr];
 		return 1;
 	} else {
@@ -1295,6 +1337,7 @@ static zf_addr peek(zf_ctx *ctx, zf_addr addr, zf_cell *val, zf_mem_size size)
 static void poke(zf_ctx *ctx, zf_addr addr, zf_cell val, zf_mem_size size)
 {
 	if(addr < ZF_USERVAR_COUNT) {
+		if(addr == ZF_USERVAR_HERE) ctx->last_lit = 0;
 		USERVAR(ctx)[addr] = val;
 	} else {
 		dict_put_cell_typed(ctx, addr, val, size);
@@ -1534,6 +1577,7 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 			if(ctx->data_compile) {
 				zf_push(ctx, (zf_cell)((size_t)ZF_DATA_ADDR + (size_t)ctx->data_here));
 			} else {
+				ctx->last_lit = 0;
 				zf_push(ctx, HERE(ctx));
 			}
 			break;
@@ -1546,6 +1590,7 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 				data_buf_reserve(ctx, size);
 				ctx->data_here = size;
 			} else {
+				ctx->last_lit = 0;
 				allot_addr(ctx, &HERE(ctx), d1);
 			}
 			break;
@@ -1575,6 +1620,60 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input)
 		case PRIM_COMPILE:
 			/* ( xt -- ) compile a call to xt, or the primitive */
 			dict_add_op(ctx, (zf_addr)zf_pop(ctx));
+			break;
+
+		/* The fused forms: the number that came before as an operand */
+
+		case PRIM_LGET_K:
+			addr = local_slot(ctx, (zf_cell)code_unit(ctx, ctx->ip));
+			ctx->ip += ZF_CODE_UNIT;
+			zf_push(ctx, ctx->rstack[addr]);
+			break;
+
+		case PRIM_LSET_K:
+			addr = local_slot(ctx, (zf_cell)code_unit(ctx, ctx->ip));
+			ctx->ip += ZF_CODE_UNIT;
+			ctx->rstack[addr] = zf_pop(ctx);
+			break;
+
+		case PRIM_2LGET_K:
+			d1 = (zf_cell)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			addr = local_slot(ctx, d1);
+			code = local_slot(ctx, d1 + 1);
+			zf_push(ctx, ctx->rstack[addr]);
+			zf_push(ctx, ctx->rstack[code]);
+			break;
+
+		case PRIM_2LSET_K:
+			d1 = (zf_cell)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			addr = local_slot(ctx, d1);
+			code = local_slot(ctx, d1 + 1);
+			ctx->rstack[code] = zf_pop(ctx);
+			ctx->rstack[addr] = zf_pop(ctx);
+			break;
+
+		case PRIM_ADD_K:
+			d1 = (int16_t)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			zf_push(ctx, (zf_cell)((zf_ucell)zf_pop(ctx) + (zf_ucell)d1));
+			break;
+
+		case PRIM_PEEK_K:
+			size = (zf_mem_size)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			addr = zf_pop(ctx);
+			peek(ctx, addr, &d1, size);
+			zf_push(ctx, d1);
+			break;
+
+		case PRIM_POKE_K:
+			size = (zf_mem_size)code_unit(ctx, ctx->ip);
+			ctx->ip += ZF_CODE_UNIT;
+			addr = zf_pop(ctx);
+			d1 = zf_pop(ctx);
+			poke(ctx, addr, d1, size);
 			break;
 
 		case PRIM_EXIT:
@@ -2541,6 +2640,7 @@ zf_result zf_init_checked(zf_ctx *ctx, int enable_trace)
 
 	ctx->input_state = ZF_INPUT_INTERPRET;
 	ctx->ip = 0;
+	ctx->last_lit = 0;
 	ctx->abort_jmp_valid = 0;
 	ctx->abort_reason = ZF_OK;
 	ctx->read_len = 0;

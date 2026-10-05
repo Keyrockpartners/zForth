@@ -136,6 +136,7 @@ typedef struct {
 	zf_input_state input_state;
 	zf_addr fp; /* local variable frame pointer into rstack, 0 if none */
 	zf_addr ip;
+	zf_addr last_lit; /* the lit16 just compiled, for fusing with what follows */
 
 	/* setjmp env for handling aborts */
 	jmp_buf jmpbuf;

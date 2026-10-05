@@ -24,12 +24,18 @@
 ' jmp 3 @@ constant op-jmp
 ' jmp0 3 @@ constant op-jmp0
 ' lits 3 @@ constant op-lits
+: nm? ( a n s n -- a n f ) 2over str= ;
+: op1? ( u -- f ) ( the primitives with one unit of operand )
+  xt->a dup 0= if exit fi dup @ 31 & swap next next swap
+  s" lit16" nm? >r s" (l@)" nm? r> | >r s" (l!)" nm? r> | >r
+  s" (2l@)" nm? r> | >r s" (2l!)" nm? r> | >r s" (+)" nm? r> | >r
+  s" (@@)" nm? r> | >r s" (!!)" nm? r> | nip nip ;
 : .op ( xt -- ) xt->a dup if name drop else drop ." ?" fi ;
 : disas ( a -- a ) dup . br br dup 3 @@ >r 2 +
   r@ op-call = if dup 1 @@ .op 4 + r> drop cr exit fi
   r@ dup prim-count < not if 2 * fi .op
   r@ op-lit = if br dup 1 @@ . 4 + fi
-  r@ op-lit16 = if br dup 6 @@ . 2 + fi
+  r@ dup prim-count < if op1? else drop 0 fi if br dup 6 @@ . 2 + fi
   r@ op-jmp = r@ op-jmp0 = | if br dup @j . 2 + fi
   r@ op-lits = if br dup 3 @@ over 2 + over tell 2 + + 1+ -2 & fi
   r> drop cr ;
