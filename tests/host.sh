@@ -105,6 +105,37 @@ int main(int argc, char **argv)
 	return zfl_main(argc, argv, &cfg);
 }
 EOF2
+# a host calling words by execution token (zf_find, zf_execute): looked
+# up once, run twice; a missing word; an abort reported as zfl_eval does
+cat > "$TMP/caller.c" <<'EOF2'
+#include <stdio.h>
+#include <stdlib.h>
+#include "host.h"
+static int calls;
+static void caller(zf_ctx *ctx)
+{
+	zf_addr xt;
+	if(++calls == 30) exit(0);
+	if(calls != 3) return;
+	if(zf_find(ctx, "nosuch", &xt) == ZF_ABORT_NOT_A_WORD) printf("[none]");
+	if(zf_find(ctx, "hi", &xt) == ZF_OK) {
+		zfl_execute(ctx, "hi", xt);
+		zfl_execute(ctx, "hi", xt);
+	}
+	fflush(stdout);
+	if(zf_find(ctx, "bad", &xt) == ZF_OK) zfl_execute(ctx, "bad", xt);
+}
+int main(int argc, char **argv)
+{
+	zfl_config cfg = { NULL, 0, 0, NULL, caller, 5 };
+	return zfl_main(argc, argv, &cfg);
+}
+EOF2
+if $CC $CFLAGS_COMMON $SAN_ASAN -o "$TMP/caller" "$TMP/caller.c" $HOST_SRCS -lm; then
+	c '[none]hihibad:0: division by zero' sh -c "(printf ': hi .\" hi\" ; : bad 1 0 / ;\n'; sleep 1) | '$TMP/caller' -q forth/ext.zf"
+else
+	fail=$((fail + 1)); echo "FAIL: building a host that calls by execution token"
+fi
 if $CC $CFLAGS_COMMON $SAN_ASAN -o "$TMP/own" "$TMP/own.c" $HOST_SRCS -lm; then
 	c '42' "$TMP/own" -q -x forth/ext.zf -e '21 200 sys .'
 	c 'unhandled syscall 201' "$TMP/own" -q -x forth/ext.zf -e '201 sys'

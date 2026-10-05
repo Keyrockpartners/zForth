@@ -49,6 +49,10 @@ With `ZF_ENABLE_FLOAT` (on by default), a float is an IEEE-754 single-precision 
 
 `zf_eval()` returns a `zf_result`. Besides the stack, memory and parsing errors, two reasons come from Forth code: `ZF_ABORT_BOUNDS` ("index out of range") from the `?bounds` and `slice` primitives, used for array, slice and string index checks, and `ZF_ABORT_USER` ("aborted") from the `abort` primitive, used to stop on an error after printing a message. Like the others, they abort only the current `zf_eval()` call. Hosts that print abort reasons should add messages for them. `ZF_ABORT_IMAGE_MISMATCH` is not an abort: `zf_dict_mount_rom()`, `zf_dict_import()` and `zf_dict_import_with_data()` return it for an image built with a different configuration (see below).
 
+## Calling words from the host
+
+Evaluating a word's name (`zf_eval(ctx, "handler")`) looks it up first, walking the dictionary from the latest word, which takes milliseconds on a device for a word defined early. A host that calls a word often (an event handler, a tick) should look it up once with `zf_find(ctx, "handler", &xt)` and run it with `zf_execute(ctx, xt)`, which behaves as `zf_eval()` of its name: the same aborts and results, the arguments pushed before with `zf_push()`. Look it up again when the dictionary's latest word (`ZF_USERVAR_LATEST`) changes, since a new definition may replace it.
+
 ## Prebuilt dictionaries
 
 `zforth -H NAME file.zf...` emits `NAME[]`, `NAME_len`, and `NAME_data_len`. The array is the dictionary image followed by the initial contents of the data window (its last `NAME_data_len` bytes). Pass all three unchanged to `zf_dict_mount_rom()` (ROM builds) or `zf_dict_import_with_data()`.

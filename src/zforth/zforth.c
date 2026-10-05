@@ -2831,6 +2831,73 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 }
 
 
+/* Run fn(ctx, arg) as zf_eval() runs text: an abort ends it, and resets
+ * the stacks and the compiler, and is returned */
+static zf_result protected_call(zf_ctx *ctx, void (*fn)(zf_ctx *ctx, void *arg), void *arg)
+{
+	zf_result r;
+
+	#if ZF_ENABLE_DYNAMIC_DICT
+	if(ctx == NULL || ctx->dict == NULL) {
+		return ZF_ABORT_OUTSIDE_MEM;
+	}
+	#else
+	if(ctx == NULL) {
+		return ZF_ABORT_INTERNAL_ERROR;
+	}
+	#endif
+
+	ctx->abort_jmp_valid++;
+	r = (zf_result)setjmp(ctx->jmpbuf);
+	if(r == ZF_OK) {
+		fn(ctx, arg);
+		ctx->abort_jmp_valid--;
+		ctx->abort_reason = ZF_OK;
+		return ZF_OK;
+	}
+	ctx->abort_jmp_valid--;
+	COMPILING(ctx) = 0;
+	locals_reset(ctx);
+	RSP(ctx) = 0;
+	ctx->fp = 0;
+	DSP(ctx) = 0;
+	return r;
+}
+
+struct find_arg { const char *name; zf_addr xt; int found; };
+
+static void find_call(zf_ctx *ctx, void *arg)
+{
+	struct find_arg *a = (struct find_arg *)arg;
+	zf_addr w;
+	a->found = find_word(ctx, a->name, &w, &a->xt);
+}
+
+zf_result zf_find(zf_ctx *ctx, const char *name, zf_addr *xt)
+{
+	struct find_arg a;
+	zf_result r;
+	if(name == NULL || xt == NULL) return ZF_ABORT_EXTERNAL;
+	a.name = name;
+	a.found = 0;
+	r = protected_call(ctx, find_call, &a);
+	if(r != ZF_OK) return r;
+	if(!a.found) return ZF_ABORT_NOT_A_WORD;
+	*xt = a.xt;
+	return ZF_OK;
+}
+
+static void execute_call(zf_ctx *ctx, void *arg)
+{
+	execute(ctx, *(zf_addr *)arg);
+}
+
+zf_result zf_execute(zf_ctx *ctx, zf_addr xt)
+{
+	return protected_call(ctx, execute_call, &xt);
+}
+
+
 void *zf_dump(zf_ctx *ctx, size_t *len)
 {
 	if(ctx == NULL) {

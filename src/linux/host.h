@@ -35,6 +35,9 @@ int zfl_main(int argc, char **argv, const zfl_config *cfg);
 /* Evaluates text, printing the reason if it aborts (src and line label
  * the message, src may be NULL) */
 zf_result zfl_eval(zf_ctx *ctx, const char *src, int line, const char *text);
+/* Run the word at xt (zf_execute()), printing why it aborted as zfl_eval
+ * does, with src as the name */
+zf_result zfl_execute(zf_ctx *ctx, const char *src, zf_addr xt);
 void zfl_include(zf_ctx *ctx, const char *fname);
 void zfl_save(zf_ctx *ctx, const char *fname);
 

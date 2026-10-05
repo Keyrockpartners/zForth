@@ -26,11 +26,10 @@
 /* Set when evaluating a file or -e word fails, for the exit status */
 static int had_error = 0;
 
-static zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
+/* Print why an evaluation aborted, if it did */
+static zf_result report(const char *src, int line, zf_result rv)
 {
 	const char *msg = NULL;
-
-	zf_result rv = zf_eval(ctx, buf);
 
 	switch(rv)
 	{
@@ -61,10 +60,20 @@ static zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf
 	return rv;
 }
 
+static zf_result do_eval(zf_ctx *ctx, const char *src, int line, const char *buf)
+{
+	return report(src, line, zf_eval(ctx, buf));
+}
+
 
 zf_result zfl_eval(zf_ctx *ctx, const char *src, int line, const char *text)
 {
 	return do_eval(ctx, src, line, text);
+}
+
+zf_result zfl_execute(zf_ctx *ctx, const char *src, zf_addr xt)
+{
+	return report(src, 0, zf_execute(ctx, xt));
 }
 
 

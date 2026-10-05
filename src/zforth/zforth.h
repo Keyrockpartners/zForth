@@ -194,6 +194,13 @@ zf_result zf_dict_import(zf_ctx *ctx, const void *buf, size_t len);
 zf_result zf_dict_import_with_data(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);
 zf_result zf_dict_mount_rom(zf_ctx *ctx, const void *buf, size_t len, size_t data_len);
 zf_result zf_eval(zf_ctx *ctx, const char *buf);
+/* The execution token of the word called name in *xt: ZF_OK, or
+ * ZF_ABORT_NOT_A_WORD. A lookup walks the dictionary: look a word that is
+ * called often up once (again when the latest word changes), and run it with
+ * zf_execute(). */
+zf_result zf_find(zf_ctx *ctx, const char *name, zf_addr *xt);
+/* Run the word at xt, as zf_eval() runs its name, without the lookup */
+zf_result zf_execute(zf_ctx *ctx, zf_addr xt);
 void zf_abort(zf_ctx *ctx, zf_result reason);
 
 void zf_push(zf_ctx *ctx, zf_cell v);
