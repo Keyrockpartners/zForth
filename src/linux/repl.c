@@ -47,6 +47,7 @@ static zf_result report(const char *src, int line, zf_result rv)
 		case ZF_ABORT_BAD_LOCALS: msg = "bad locals declaration"; break;
 		case ZF_ABORT_BOUNDS: msg = "index out of range"; break;
 		case ZF_ABORT_USER: msg = "aborted"; break;
+		case ZF_ABORT_NIL: msg = "nil pointer dereference"; break;
 		case ZF_ABORT_IMAGE_MISMATCH: msg = "dictionary image built with a different configuration"; break;
 		default: msg = "unknown error";
 	}

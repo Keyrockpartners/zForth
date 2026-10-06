@@ -31,6 +31,9 @@ t ': d 1 0 2 locals 0 l& 1 l& 4 move 1 l@ endlocals ; d .' '1'
 t ': s 0 0 0 3 locals 0 l& 12 65 fill 0 l& 12 tell endlocals ; s' 'AAAAAAAAAAAA'
 t ': e 0 1 locals 2 l& endlocals ; e' 'stdin:1: outside memory'
 t '0x60000000 100000 + @c' 'stdin:1: outside memory'
+# ?nil passes a pointer through and aborts on nil
+t ': a 1 locals 0 l& ?nil @c . endlocals ; 6 a' '6'
+t '0 ?nil' 'stdin:1: nil pointer dereference'
 # recursion keeps each call's frame memory apart
 t ': r 0 2 locals 0 l@ 1 l! 0 l@ 0 > if 0 l@ 1 - r fi 1 l@ . endlocals ; 3 r' '0 1 2 3'
 # errors, and recovery after them

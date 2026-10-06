@@ -120,7 +120,7 @@ typedef enum {
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
 	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
 	PRIM_LGET_K,  PRIM_LSET_K,    PRIM_2LGET_K, PRIM_2LSET_K, PRIM_ADD_K,  PRIM_PEEK_K,
-	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K, PRIM_LADDR,  PRIM_LADDR_K,
+	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K, PRIM_LADDR,  PRIM_LADDR_K, PRIM_NILCHECK,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -184,7 +184,7 @@ static const char prim_names[] =
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
 	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
 	_("(l@)")    _("(l!)")       _("(2l@)") _("(2l!)") _("(+)")       _("(@@)")
-	_("(!!)")    _("index")      _("(index)") _("l&")     _("(l&)")
+	_("(!!)")    _("index")      _("(index)") _("l&")     _("(l&)")      _("?nil")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -2214,6 +2214,13 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 			d2 = zf_pick(ctx, 0);
 			if((zf_ucell)d2 >= (zf_ucell)d1) {
 				zf_abort(ctx, ZF_ABORT_BOUNDS);
+			}
+			break;
+
+		case PRIM_NILCHECK:
+			/* ( p -- p ) abort on a nil pointer about to be dereferenced */
+			if(zf_pick(ctx, 0) == 0) {
+				zf_abort(ctx, ZF_ABORT_NIL);
 			}
 			break;
 

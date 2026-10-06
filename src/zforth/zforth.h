@@ -72,7 +72,8 @@ typedef enum {
 	ZF_ABORT_BAD_LOCALS,
 	ZF_ABORT_BOUNDS,
 	ZF_ABORT_USER,
-	ZF_ABORT_IMAGE_MISMATCH
+	ZF_ABORT_IMAGE_MISMATCH,
+	ZF_ABORT_NIL
 } zf_result;
 
 typedef enum {
