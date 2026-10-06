@@ -7,7 +7,8 @@ zForth
 > **This fork** is the engine for the BlueStreak device platform: 32-bit
 > cells, floats and 64-bit integers, local frames (addressable: `k l&` is
 > local k's address in the return-stack window, so a frame can hold arrays
-> and structures) and ROM images (see
+> and structures), extension primitives a port compiles in without
+> changing the engine (`ZF_EXT_PRIMS_HEADER`, SYSCALLS.md) and ROM images (see
 > [SYSCALLS.md](SYSCALLS.md) for what a host implements). The platform and
 > the ZGo language built on it live in `Keyrockpartners/bs-zgo-device`.
 

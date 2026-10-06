@@ -13,6 +13,27 @@ extern "C"
 
 #include "zfconf.h"
 
+/* Extension primitives: a port may define ZF_EXT_PRIMS_HEADER in its
+ * zfconf.h, a header compiled into the engine that defines
+ *   ZF_EXT_PRIM_ENUM     the primitives' enumerators (PRIM_EXT_...),
+ *   ZF_EXT_PRIM_NAMES    their names, _("name") each, in the same order,
+ *   ZF_EXT_PRIM_CASES    their code: case PRIM_EXT_...: ... break; in
+ *                        do_prim(), with the engine's own helpers (zf_pop,
+ *                        zf_push, zf_pick, dict_get_bytes, dict_put_bytes,
+ *                        dict_move, zf_abort, CHECK, reg_unit for a fused
+ *                        operand),
+ *   ZF_EXT_FUSED_CASES   optional: case PRIM_EXT_X: return PRIM_EXT_X_K;
+ *                        for a form taking the number before it as an
+ *                        operand, as (l@) k does,
+ *   ZF_EXT_RESULTS       optional: abort reasons, appended to zf_result,
+ *   ZF_EXT_RESULT_MESSAGES  their messages for a host that prints them:
+ *                        case ZF_ABORT_X: msg = "..."; break;
+ *   ZF_EXT_PRIMS_ID      a number for the set, part of the image check.
+ * They run as the engine's own primitives do: one dispatch each. */
+#ifdef ZF_EXT_PRIMS_HEADER
+#include ZF_EXT_PRIMS_HEADER
+#endif
+
 #ifndef ZF_ENABLE_DYNAMIC_DICT
 #define ZF_ENABLE_DYNAMIC_DICT 0
 #endif
@@ -72,8 +93,10 @@ typedef enum {
 	ZF_ABORT_BAD_LOCALS,
 	ZF_ABORT_BOUNDS,
 	ZF_ABORT_USER,
-	ZF_ABORT_IMAGE_MISMATCH,
-	ZF_ABORT_NIL
+	ZF_ABORT_IMAGE_MISMATCH
+#ifdef ZF_EXT_RESULTS
+	, ZF_EXT_RESULTS
+#endif
 } zf_result;
 
 typedef enum {

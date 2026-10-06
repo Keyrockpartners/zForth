@@ -120,7 +120,7 @@ typedef enum {
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
 	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
 	PRIM_LGET_K,  PRIM_LSET_K,    PRIM_2LGET_K, PRIM_2LSET_K, PRIM_ADD_K,  PRIM_PEEK_K,
-	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K, PRIM_LADDR,  PRIM_LADDR_K, PRIM_NILCHECK,
+	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K, PRIM_LADDR,  PRIM_LADDR_K,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -144,6 +144,9 @@ typedef enum {
 #if ZF_ENABLE_DOUBLE_CELL && ZF_ENABLE_FLOAT
 	PRIM_DTOF,    PRIM_UDTOF,
 #endif
+#ifdef ZF_EXT_PRIM_ENUM
+	ZF_EXT_PRIM_ENUM
+#endif
 	PRIM_COUNT
 } zf_prim;
 
@@ -153,10 +156,14 @@ typedef enum {
  * image (user variable ZF_USERVAR_CONFIG) and checked when one is imported
  * or mounted. Bump ZF_IMAGE_VERSION when the primitives or the image layout
  * change without changing PRIM_COUNT. An image from a machine of the other
- * byte order fails the check too. */
+ * byte order fails the check too. The platform's primitives (zfconf.h,
+ * ZF_EXT_PRIMS_HEADER) add their count and their ZF_EXT_PRIMS_ID. */
 #define ZF_IMAGE_VERSION 3
+#ifndef ZF_EXT_PRIMS_ID
+#define ZF_EXT_PRIMS_ID 0
+#endif
 #define ZF_IMAGE_CONFIG ((zf_addr)( \
-	(zf_addr)PRIM_COUNT | \
+	((zf_addr)PRIM_COUNT ^ (zf_addr)ZF_EXT_PRIMS_ID * 0x9e3779b1u) | \
 	(zf_addr)(ZF_ENABLE_NAMED_LOCALS ? 1 : 0) << 10 | \
 	(zf_addr)(ZF_ENABLE_DOUBLE_CELL ? 1 : 0) << 11 | \
 	(zf_addr)(ZF_ENABLE_FLOAT ? 1 : 0) << 12 | \
@@ -184,7 +191,7 @@ static const char prim_names[] =
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
 	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
 	_("(l@)")    _("(l!)")       _("(2l@)") _("(2l!)") _("(+)")       _("(@@)")
-	_("(!!)")    _("index")      _("(index)") _("l&")     _("(l&)")      _("?nil")
+	_("(!!)")    _("index")      _("(index)") _("l&")     _("(l&)")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -207,6 +214,9 @@ static const char prim_names[] =
 #endif
 #if ZF_ENABLE_DOUBLE_CELL && ZF_ENABLE_FLOAT
 	_("d>f")     _("ud>f")
+#endif
+#ifdef ZF_EXT_PRIM_NAMES
+	ZF_EXT_PRIM_NAMES
 #endif
 	;
 #endif
@@ -1235,6 +1245,9 @@ static zf_addr fused_op(zf_addr op)
 		case PRIM_POKE: return PRIM_POKE_K;
 		case PRIM_INDEX: return PRIM_INDEX_K;
 		case PRIM_LADDR: return PRIM_LADDR_K;
+#ifdef ZF_EXT_FUSED_CASES
+		ZF_EXT_FUSED_CASES
+#endif
 		default: return PRIM_COUNT;
 	}
 }
@@ -2217,13 +2230,6 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 			}
 			break;
 
-		case PRIM_NILCHECK:
-			/* ( p -- p ) abort on a nil pointer about to be dereferenced */
-			if(zf_pick(ctx, 0) == 0) {
-				zf_abort(ctx, ZF_ABORT_NIL);
-			}
-			break;
-
 		case PRIM_ABORT:
 			/* Abort the running code, as for an error */
 			zf_abort(ctx, ZF_ABORT_USER);
@@ -2771,6 +2777,11 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 		case PRIM_UDTOF:
 			zf_pushf(ctx, (float)zf_popud(ctx));
 			break;
+#endif
+
+#ifdef ZF_EXT_PRIM_CASES
+		/* The platform's primitives (ZF_EXT_PRIMS_HEADER) */
+		ZF_EXT_PRIM_CASES
 #endif
 
 		default:
