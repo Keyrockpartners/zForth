@@ -22,6 +22,17 @@ t ': junk 1 locals 1 >r 2 >r 3 >r endlocals 5 ; 0 junk .' '5'
 # two-cell values occupy two slots
 t ': dadd 0 0 4 locals 0 l@ 1 l@ 0 l@ 1 l@ d+ endlocals ; 1700000000000. dadd d.' '3400000000000'
 t ': fsum 2 locals 0 l@ 1 l@ f+ endlocals ; 1.5 2.25 fsum f.' '3.75'
+# l& gives a local's address in the return-stack window: a frame can hold
+# arrays and structures, read and written with the memory words
+t ': a 5 1 locals 0 l& @c . 9 0 l& !c 0 l@ . endlocals ; a' '5 9'
+t ': b 0 0 0 3 locals 0 l& 12 7 fill 0 l& @u8 . 2 l& 3 + @u8 . 1 l@ . endlocals ; b' '7 7 117901063'
+t ': inner 0 1 locals 42 0 l& !c 0 l@ endlocals ; : outer 7 1 locals inner . 0 l@ endlocals ; outer .' '42 7'
+t ': d 1 0 2 locals 0 l& 1 l& 4 move 1 l@ endlocals ; d .' '1'
+t ': s 0 0 0 3 locals 0 l& 12 65 fill 0 l& 12 tell endlocals ; s' 'AAAAAAAAAAAA'
+t ': e 0 1 locals 2 l& endlocals ; e' 'stdin:1: outside memory'
+t '0x60000000 100000 + @c' 'stdin:1: outside memory'
+# recursion keeps each call's frame memory apart
+t ': r 0 2 locals 0 l@ 1 l! 0 l@ 0 > if 0 l@ 1 - r fi 1 l@ . endlocals ; 3 r' '0 1 2 3'
 # errors, and recovery after them
 t '0 l@' 'stdin:1: outside memory'
 t 'endlocals' 'stdin:1: rstack underrun'

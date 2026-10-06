@@ -120,7 +120,7 @@ typedef enum {
 	PRIM_2DUP,    PRIM_2DROP,     PRIM_INC,  PRIM_NE,       PRIM_GT,       PRIM_MIN,
 	PRIM_MAX,     PRIM_FETCH,     PRIM_STORE, PRIM_LIT16,   PRIM_CALL,     PRIM_COMPILE,
 	PRIM_LGET_K,  PRIM_LSET_K,    PRIM_2LGET_K, PRIM_2LSET_K, PRIM_ADD_K,  PRIM_PEEK_K,
-	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K,
+	PRIM_POKE_K,  PRIM_INDEX,     PRIM_INDEX_K, PRIM_LADDR,  PRIM_LADDR_K,
 #if ZF_ENABLE_NAMED_LOCALS
 	PRIM_LBRACE,  PRIM_TO,
 #endif
@@ -154,7 +154,7 @@ typedef enum {
  * or mounted. Bump ZF_IMAGE_VERSION when the primitives or the image layout
  * change without changing PRIM_COUNT. An image from a machine of the other
  * byte order fails the check too. */
-#define ZF_IMAGE_VERSION 2
+#define ZF_IMAGE_VERSION 3
 #define ZF_IMAGE_CONFIG ((zf_addr)( \
 	(zf_addr)PRIM_COUNT | \
 	(zf_addr)(ZF_ENABLE_NAMED_LOCALS ? 1 : 0) << 10 | \
@@ -184,7 +184,7 @@ static const char prim_names[] =
 	_("2dup")    _("2drop")      _("1+")    _("!=")    _(">")         _("min")
 	_("max")     _("@")          _("!")     _("lit16") _("call")      _("compile,")
 	_("(l@)")    _("(l!)")       _("(2l@)") _("(2l!)") _("(+)")       _("(@@)")
-	_("(!!)")    _("index")      _("(index)")
+	_("(!!)")    _("index")      _("(index)") _("l&")     _("(l&)")
 #if ZF_ENABLE_NAMED_LOCALS
 	_("_{:")     _("_to")
 #endif
@@ -391,7 +391,29 @@ static int range_end(zf_addr addr, size_t len, size_t *end)
 
 static int is_data_addr(zf_addr addr)
 {
-	return (size_t)addr >= (size_t)ZF_DATA_ADDR;
+	return (size_t)addr >= (size_t)ZF_DATA_ADDR && (size_t)addr < (size_t)ZF_RSTACK_ADDR;
+}
+
+/* The return-stack window [ZF_RSTACK_ADDR, ZF_RSTACK_ADDR + sizeof rstack)
+ * makes the return stack's cells addressable, so a local frame can hold
+ * arrays and structures: k l& is the address of local k. The whole stack
+ * is in the window; l& only gives addresses inside the open frame. */
+static int is_rstack_addr(zf_addr addr)
+{
+	return (size_t)addr >= (size_t)ZF_RSTACK_ADDR;
+}
+
+static int rstack_window_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	size_t off = (size_t)addr - (size_t)ZF_RSTACK_ADDR;
+	size_t size = sizeof(ctx->rstack);
+	return off <= size && len <= size - off;
+}
+
+static uint8_t *rstack_window_ptr(zf_ctx *ctx, zf_addr addr, size_t len)
+{
+	CHECK(ctx, rstack_window_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
+	return (uint8_t *)ctx->rstack + ((size_t)addr - (size_t)ZF_RSTACK_ADDR);
 }
 
 static size_t data_window_size(const zf_ctx *ctx)
@@ -411,6 +433,9 @@ static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 	size_t start = (size_t)addr;
 	size_t end;
 
+	if(is_rstack_addr(addr)) {
+		return rstack_window_has_range(ctx, addr, len);
+	}
 	if(is_data_addr(addr)) {
 		return data_window_has_range(ctx, addr, len);
 	}
@@ -441,6 +466,9 @@ static int dict_has_writable_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 	size_t start = (size_t)addr;
 	size_t end;
 
+	if(is_rstack_addr(addr)) {
+		return rstack_window_has_range(ctx, addr, len);
+	}
 	if(is_data_addr(addr)) {
 		return data_window_has_range(ctx, addr, len);
 	}
@@ -732,6 +760,9 @@ static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
+	if(is_rstack_addr(addr)) {
+		return rstack_window_ptr(ctx, addr, len);
+	}
 	if(is_data_addr(addr)) {
 		return data_window_ptr(ctx, addr, len);
 	}
@@ -754,6 +785,9 @@ static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
  * dict_put_bytes() then decides (growing the dictionary, or aborting) */
 static uint8_t *dict_span_writable(zf_ctx *ctx, zf_addr addr, size_t len)
 {
+	if(is_rstack_addr(addr)) {
+		return rstack_window_ptr(ctx, addr, len);
+	}
 	if(is_data_addr(addr)) {
 		return data_window_ptr(ctx, addr, len);
 	}
@@ -768,6 +802,11 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 {
 	const uint8_t *p = (const uint8_t *)buf;
 	size_t off;
+	if(is_rstack_addr(addr)) {
+		uint8_t *dst = rstack_window_ptr(ctx, addr, len);
+		if(len) memcpy(dst, buf, len);
+		return len;
+	}
 	if(is_data_addr(addr)) {
 		uint8_t *dst = data_window_ptr(ctx, addr, len);
 		if(len) memcpy(dst, buf, len);
@@ -791,6 +830,11 @@ static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
 	const uint8_t *src;
+	if(is_rstack_addr(addr)) {
+		src = rstack_window_ptr(ctx, addr, len);
+		if(len) memcpy(buf, src, len);
+		return;
+	}
 	if(is_data_addr(addr)) {
 		src = data_window_ptr(ctx, addr, len);
 		if(len) memcpy(buf, src, len);
@@ -817,6 +861,9 @@ const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
+	if(is_rstack_addr(addr)) {
+		return rstack_window_ptr(ctx, addr, len);
+	}
 	if(is_data_addr(addr)) {
 		return data_window_ptr(ctx, addr, len);
 	}
@@ -1187,6 +1234,7 @@ static zf_addr fused_op(zf_addr op)
 		case PRIM_PEEK: return PRIM_PEEK_K;
 		case PRIM_POKE: return PRIM_POKE_K;
 		case PRIM_INDEX: return PRIM_INDEX_K;
+		case PRIM_LADDR: return PRIM_LADDR_K;
 		default: return PRIM_COUNT;
 	}
 }
@@ -2315,6 +2363,19 @@ ZF_HOT void do_prim(zf_ctx *ctx, zf_prim op, const char *input, zf_reg *r)
 			d1 = zf_pop(ctx);
 			addr = local_slot(ctx, d1);
 			ctx->rstack[addr] = zf_pop(ctx);
+			break;
+
+		case PRIM_LADDR_K:
+			d1 = (zf_cell)reg_unit(ctx, r, r->ip);
+			r->ip += ZF_CODE_UNIT;
+			goto laddr;
+		case PRIM_LADDR:
+			/* ( k -- addr ) the address of local k in the return-stack
+			 * window, for arrays and structures kept in the frame */
+			d1 = zf_pop(ctx);
+		laddr:
+			addr = local_slot(ctx, d1);
+			zf_push(ctx, (zf_cell)((zf_ucell)ZF_RSTACK_ADDR + (zf_ucell)addr * sizeof(zf_cell)));
 			break;
 
 		case PRIM_2LGET:

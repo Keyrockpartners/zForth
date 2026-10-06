@@ -65,6 +65,14 @@
 #define ZF_DATA_ADDR 0x40000000u
 #endif
 
+/* The return-stack window: the return stack's cells are addressable at
+ * [ZF_RSTACK_ADDR, ZF_RSTACK_ADDR + ZF_RSTACK_SIZE * cell), so a local
+ * frame can hold arrays and structures (k l& gives local k's address). The
+ * data window ends here. */
+#ifndef ZF_RSTACK_ADDR
+#define ZF_RSTACK_ADDR 0x60000000u
+#endif
+
 
 /* Set to 1 to add boundary checks to stack operations. Increases .text size
  * by approx 100 bytes */
