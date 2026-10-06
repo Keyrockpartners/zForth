@@ -29,7 +29,7 @@
   xt->a dup 0= if exit fi dup @ 31 & swap next next swap
   s" lit16" nm? >r s" (l@)" nm? r> | >r s" (l!)" nm? r> | >r
   s" (2l@)" nm? r> | >r s" (2l!)" nm? r> | >r s" (+)" nm? r> | >r
-  s" (@@)" nm? r> | >r s" (!!)" nm? r> | >r s" (index)" nm? r> | nip nip ;
+  s" (@@)" nm? r> | >r s" (!!)" nm? r> | nip nip ;
 : .op ( xt -- ) xt->a dup if name drop else drop ." ?" fi ;
 : disas ( a -- a ) dup . br br dup 3 @@ >r 2 +
   r@ op-call = if dup 1 @@ .op 4 + r> drop cr exit fi

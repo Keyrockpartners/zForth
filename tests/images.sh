@@ -37,7 +37,7 @@ t '9 foo ! 3 variable v base foo @ . msg 3 tell : again 2 . ; again base 1 2 + .
 t 'base base 7 variable w w @ .' '7'
 # the string primitives across the ROM, the data window and RAM
 t 'greeting msg 3 str= . greeting s" hi!" str= . msg 3 greeting compare . s" hi?" greeting compare .' '-1 -1 0 1'
-t '8 buffer: b3 b3 8 46 fill b3 8 greeting 1 copy . b3 4 tell msg 3 s" yo" 1 copy . msg 3 tell' '3 hi!.2 yo!'
+t '8 buffer: b3 b3 8 46 fill greeting b3 swap move b3 4 tell s" yo" msg swap move msg 3 tell' 'hi!.yo!'
 t 'greeting drop here 3 move here 3 tell greeting drop msg 1+ 2 move msg 3 tell' 'hi!hhi'
 
 image doubles
