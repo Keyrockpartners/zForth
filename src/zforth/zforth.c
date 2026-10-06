@@ -399,9 +399,12 @@ static int range_end(zf_addr addr, size_t len, size_t *end)
  * backed by data_buf; after import/mount it is backed by the data_len bytes
  * reserved at data_base in the writable dictionary. */
 
-static int is_data_addr(zf_addr addr)
+/* Both windows are above every dictionary address, so an access tests
+ * once for a window and only then which; dictionary accesses, the most
+ * common, pay one compare */
+static int is_window_addr(zf_addr addr)
 {
-	return (size_t)addr >= (size_t)ZF_DATA_ADDR && (size_t)addr < (size_t)ZF_RSTACK_ADDR;
+	return (size_t)addr >= (size_t)ZF_DATA_ADDR;
 }
 
 /* The return-stack window [ZF_RSTACK_ADDR, ZF_RSTACK_ADDR + sizeof rstack)
@@ -443,11 +446,8 @@ static int dict_has_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 	size_t start = (size_t)addr;
 	size_t end;
 
-	if(is_rstack_addr(addr)) {
-		return rstack_window_has_range(ctx, addr, len);
-	}
-	if(is_data_addr(addr)) {
-		return data_window_has_range(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		return is_rstack_addr(addr) ? rstack_window_has_range(ctx, addr, len) : data_window_has_range(ctx, addr, len);
 	}
 	if(!range_end(addr, len, &end)) {
 		return 0;
@@ -476,11 +476,8 @@ static int dict_has_writable_range(const zf_ctx *ctx, zf_addr addr, size_t len)
 	size_t start = (size_t)addr;
 	size_t end;
 
-	if(is_rstack_addr(addr)) {
-		return rstack_window_has_range(ctx, addr, len);
-	}
-	if(is_data_addr(addr)) {
-		return data_window_has_range(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		return is_rstack_addr(addr) ? rstack_window_has_range(ctx, addr, len) : data_window_has_range(ctx, addr, len);
 	}
 	if(!range_end(addr, len, &end)) {
 		return 0;
@@ -770,11 +767,8 @@ static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
-	if(is_rstack_addr(addr)) {
-		return rstack_window_ptr(ctx, addr, len);
-	}
-	if(is_data_addr(addr)) {
-		return data_window_ptr(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		return is_rstack_addr(addr) ? rstack_window_ptr(ctx, addr, len) : data_window_ptr(ctx, addr, len);
 	}
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	if(!range_end(addr, len, &end)) {
@@ -795,11 +789,8 @@ static const uint8_t *dict_span(zf_ctx *ctx, zf_addr addr, size_t len)
  * dict_put_bytes() then decides (growing the dictionary, or aborting) */
 static uint8_t *dict_span_writable(zf_ctx *ctx, zf_addr addr, size_t len)
 {
-	if(is_rstack_addr(addr)) {
-		return rstack_window_ptr(ctx, addr, len);
-	}
-	if(is_data_addr(addr)) {
-		return data_window_ptr(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		return is_rstack_addr(addr) ? rstack_window_ptr(ctx, addr, len) : data_window_ptr(ctx, addr, len);
 	}
 	if(!dict_has_writable_range(ctx, addr, len)) {
 		return NULL;
@@ -812,13 +803,8 @@ static zf_addr dict_put_bytes(zf_ctx *ctx, zf_addr addr, const void *buf, size_t
 {
 	const uint8_t *p = (const uint8_t *)buf;
 	size_t off;
-	if(is_rstack_addr(addr)) {
-		uint8_t *dst = rstack_window_ptr(ctx, addr, len);
-		if(len) memcpy(dst, buf, len);
-		return len;
-	}
-	if(is_data_addr(addr)) {
-		uint8_t *dst = data_window_ptr(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		uint8_t *dst = is_rstack_addr(addr) ? rstack_window_ptr(ctx, addr, len) : data_window_ptr(ctx, addr, len);
 		if(len) memcpy(dst, buf, len);
 		return len;
 	}
@@ -840,13 +826,8 @@ static void dict_get_bytes(zf_ctx *ctx, zf_addr addr, void *buf, size_t len)
 {
 	uint8_t *p = (uint8_t *)buf;
 	const uint8_t *src;
-	if(is_rstack_addr(addr)) {
-		src = rstack_window_ptr(ctx, addr, len);
-		if(len) memcpy(buf, src, len);
-		return;
-	}
-	if(is_data_addr(addr)) {
-		src = data_window_ptr(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		src = is_rstack_addr(addr) ? rstack_window_ptr(ctx, addr, len) : data_window_ptr(ctx, addr, len);
 		if(len) memcpy(buf, src, len);
 		return;
 	}
@@ -871,11 +852,8 @@ const void *zf_dict_addr(zf_ctx *ctx, zf_addr addr, size_t len)
 {
 	size_t start = (size_t)addr;
 	size_t end;
-	if(is_rstack_addr(addr)) {
-		return rstack_window_ptr(ctx, addr, len);
-	}
-	if(is_data_addr(addr)) {
-		return data_window_ptr(ctx, addr, len);
+	if(is_window_addr(addr)) {
+		return is_rstack_addr(addr) ? rstack_window_ptr(ctx, addr, len) : data_window_ptr(ctx, addr, len);
 	}
 	CHECK(ctx, dict_has_range(ctx, addr, len), ZF_ABORT_OUTSIDE_MEM);
 	if(!range_end(addr, len, &end)) {
