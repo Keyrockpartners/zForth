@@ -201,6 +201,9 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf);
 zf_result zf_find(zf_ctx *ctx, const char *name, zf_addr *xt);
 /* Run the word at xt, as zf_eval() runs its name, without the lookup */
 zf_result zf_execute(zf_ctx *ctx, zf_addr xt);
+#if defined(__GNUC__)
+__attribute__((noreturn))
+#endif
 void zf_abort(zf_ctx *ctx, zf_result reason);
 
 void zf_push(zf_ctx *ctx, zf_cell v);

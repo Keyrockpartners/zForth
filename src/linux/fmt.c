@@ -81,7 +81,7 @@ static int fmt_cells(const fmt_spec *sp)
 /* Build the C format for a placeholder: % flags width .prec, then conv */
 static void fmt_cspec(char *out, size_t size, const fmt_spec *sp, const char *conv)
 {
-	char width[8] = "", prec[8] = "";
+	char width[12] = "", prec[12] = "";
 	if(sp->width >= 0) snprintf(width, sizeof(width), "%d", sp->width);
 	if(sp->prec >= 0) snprintf(prec, sizeof(prec), ".%d", sp->prec);
 	snprintf(out, size, "%%%s%s%s%s", sp->flags, width, prec, conv);

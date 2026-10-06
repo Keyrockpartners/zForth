@@ -41,6 +41,7 @@ c '0' "$ZF" -q -x forth/ext.zf -e '16 buffer: b b 0 7 s" %d" fmt-buf .'
 c '1.50|  ab|-5|ffffffff21' "$ZF" -q -x forth/ext.zf -e '64 buffer: b b 64 1.5 s" ab" -5 -1 s" %.2f|%4s|%d|%x" fmt-buf b over tell .'
 c '1234567890111' "$ZF" -q -x forth/ext.zf -e '64 buffer: b b 64 12345678901. s" %ld" fmt-buf b over tell .'
 c '-e:1: outside memory' "$ZF" -q -x forth/ext.zf -e '0x30000000 100 s" xyz" fmt-buf'
+c '255 255' "$ZF" -q -x forth/ext.zf -e '256 buffer: b b 256 1 s" %999999999d" fmt-buf . b 256 1 s" %.999999999d" fmt-buf .'
 # a ROM image selected with ZF_DICT_HEADER
 mkdir -p "$TMP/img"
 "$ZF" -H zforth_dict forth/ext.zf "$TMP/a.zf" > "$TMP/img/custom.h"
@@ -108,6 +109,7 @@ EOF2
 # a host calling words by execution token (zf_find, zf_execute): looked
 # up once, run twice; a missing word; an abort reported as zfl_eval does
 cat > "$TMP/caller.c" <<'EOF2'
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "host.h"
@@ -117,6 +119,10 @@ static void caller(zf_ctx *ctx)
 	zf_addr xt;
 	if(++calls == 30) exit(0);
 	if(calls != 3) return;
+	assert(zf_eval(ctx, "1 0 / 99") == ZF_ABORT_DIVISION_BY_ZERO);
+	assert(zf_eval(ctx, "0x30000000 1 tell") == ZF_ABORT_OUTSIDE_MEM);
+	assert(zf_eval(ctx, "1 2 +") == ZF_OK);
+	assert(zf_pop(ctx) == 3);
 	if(zf_find(ctx, "nosuch", &xt) == ZF_ABORT_NOT_A_WORD) printf("[none]");
 	if(zf_find(ctx, "hi", &xt) == ZF_OK) {
 		zfl_execute(ctx, "hi", xt);

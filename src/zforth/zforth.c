@@ -3031,14 +3031,13 @@ zf_result zf_eval(zf_ctx *ctx, const char *buf)
 	r = (zf_result)setjmp(ctx->jmpbuf);
 
 	if(r == ZF_OK) {
-		for(;;) {
-			handle_char(ctx, *buf);
-			if(*buf == '\0') {
+		for(const char *p = buf; ; p++) {
+			handle_char(ctx, *p);
+			if(*p == '\0') {
 				ctx->abort_jmp_valid--;
 				ctx->abort_reason = ZF_OK;
 				return ZF_OK;
 			}
-			buf ++;
 		}
 	} else {
 		ctx->abort_jmp_valid--;
